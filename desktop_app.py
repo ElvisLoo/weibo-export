@@ -64,7 +64,7 @@ def main() -> None:
         import webview  # pywebview
         import os
         _ico = os.path.join(sys._MEIPASS, "app.ico") if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") \
-            else os.path.join(os.path.dirname(os.path.abspath(__file__)), "build", "app.ico")
+            else os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "app.ico")
         webview.create_window(
             "极客港 · 微博导出工具",
             URL,

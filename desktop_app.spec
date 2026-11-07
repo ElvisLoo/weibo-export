@@ -19,7 +19,7 @@ a = Analysis(
         # 把界面静态资源打进包，目标路径与 paths.static_dir() 一致
         (os.path.join('weibo_export', 'static'), os.path.join('weibo_export', 'static')),
         # 应用图标（窗口标题栏 / 任务栏用）
-        (os.path.join('build', 'app.ico'), '.'),
+        (os.path.join('assets', 'app.ico'), '.'),
     ],
     hiddenimports=[
         'uvicorn',
@@ -40,7 +40,14 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        # 排除本项目用不到的巨型依赖，显著减小产物体积、加快打包
+        'scipy', 'matplotlib', 'pandas', 'numpy',
+        'PyQt5', 'PySide2', 'PyQt6', 'PySide6',
+        'tkinter', 'IPython', 'notebook', 'jupyter',
+        'pytest', 'setuptools', 'pip', 'wheel',
+        'scrapy',
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -56,7 +63,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=os.path.join('build', 'app.ico'),
+    icon=os.path.join('assets', 'app.ico'),
 )
 coll = COLLECT(
     exe,

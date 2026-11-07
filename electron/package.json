@@ -1,0 +1,39 @@
+{
+  "name": "jikegang-weibo-export",
+  "productName": "极客港·微博导出",
+  "version": "0.1.0",
+  "description": "极客港 (jikegang.com) 出品的新浪微博博文导出工具桌面壳。后端为 Python 引擎，Electron 仅负责打开本地界面。",
+  "main": "main.js",
+  "author": "极客港 jikegang.com",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "postinstall": "echo '桌面版安装后端依赖：python -m pip install -r ../requirements.txt'"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.jikegang.weibo-export",
+    "productName": "极客港·微博导出",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../weibo_export",
+        "to": "weibo_export"
+      },
+      {
+        "from": "../requirements.txt",
+        "to": "requirements.txt"
+      }
+    ]
+  }
+}

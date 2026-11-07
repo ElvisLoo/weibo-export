@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>极客港 · 微博导出工具</title>
+<link rel="icon" type="image/png" href="/static/icon.png">
+<link rel="apple-touch-icon" href="/static/icon.png">
+<style>
+:root{--brand:#e6162d;--brand2:#ff5a5f;--bg:#f5f6f7;--card:#fff;--text:#1a1a1a;--muted:#888;--border:#eaeaea;--ok:#16a34a;--warn:#d97706;--err:#dc2626}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;background:var(--bg);color:var(--text);line-height:1.6}
+header{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;padding:20px 24px}
+header h1{margin:0;font-size:20px;font-weight:600}
+header .sub{opacity:.9;font-size:13px;margin-top:4px}
+.wrap{max-width:980px;margin:0 auto;padding:20px}
+.card{background:var(--card);border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+.card h2{margin:0 0 14px;font-size:16px;display:flex;align-items:center;gap:8px}
+.card h2 .tag{font-size:11px;background:#eef2ff;color:#4f46e5;padding:2px 8px;border-radius:10px;font-weight:400}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+input[type=text],input[type=number],textarea,select{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;background:#fff}
+textarea{resize:vertical;min-height:70px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>div{flex:1;min-width:160px}
+button{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer;font-family:inherit;transition:.15s}
+button:hover{opacity:.9}
+button:disabled{background:#ccc;cursor:not-allowed}
+button.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+button.warn{background:var(--warn)}
+.btns{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+.hint a{color:var(--brand)}
+.checks{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+.checks label{display:flex;align-items:center;gap:5px;color:var(--text);font-size:14px;margin:0}
+.checks input{width:auto}
+#statusBar{font-size:13px;padding:10px 12px;border-radius:8px;background:#f8f9fa;border:1px solid var(--border);margin-top:14px;display:none}
+#statusBar.show{display:block}
+#statusBar.ok{border-color:#bbf7d0;background:#f0fdf4}
+#statusBar.warn{border-color:#fde68a;background:#fffbeb}
+#statusBar.err{border-color:#fecaca;background:#fef2f2}
+.prog{height:8px;background:#eee;border-radius:6px;overflow:hidden;margin-top:10px;display:none}
+.prog.show{display:block}
+.prog>div{height:100%;background:linear-gradient(90deg,var(--brand),var(--brand2));width:0;transition:width .4s}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:500}
+.badge{display:inline-block;padding:1px 8px;border-radius:8px;font-size:11px}
+.badge.ok{background:#dcfce7;color:#166534}
+.badge.off{background:#f3f4f6;color:#666}
+code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:12px}
+.steps{font-size:13px;color:var(--muted);padding-left:18px;margin:6px 0}
+.steps li{margin:4px 0}
+footer{text-align:center;color:#aaa;font-size:12px;padding:24px}
+.disclaimer{font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-top:12px}
+.file-list{font-size:13px;margin-top:10px}
+.file-list div{padding:4px 0;border-bottom:1px dashed var(--border)}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap" style="padding:0">
+    <h1>极客港 · 微博博文导出工具</h1>
+    <div class="sub">jikegang-weibo-export <span id="ver"></span> · 个人数据备份，导出 HTML / Markdown / PDF / JSON / TXT</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 服务状态 -->
+  <div class="card">
+    <h2>服务状态 <span class="tag" id="dbBadge">检查中</span></h2>
+    <div class="hint" id="statusLine">正在连接后端…</div>
+  </div>
+
+  <!-- 第一步：Cookie -->
+  <div class="card">
+    <h2>① 填写 Cookie（推荐）<span class="tag">登录态抓全量</span></h2>
+    <ol class="steps">
+      <li>电脑浏览器打开 <a href="https://m.weibo.cn" target="_blank">m.weibo.cn</a> 并登录自己的微博</li>
+      <li>按 <code>F12</code> 打开开发者工具 → <code>Network(网络)</code> → 刷新页面</li>
+      <li>点任意请求 → <code>Headers</code> → 找到 <code>Request Headers</code> 里的 <code>Cookie</code></li>
+      <li>整行复制，粘贴到下面输入框</li>
+    </ol>
+    <textarea id="cookie" placeholder="粘贴从浏览器复制的 Cookie（含 SUB、SUBP、MLOGIN 等字段）。留空则为「未登录公开抓取」降级模式，只能抓公开可见的博文。"></textarea>
+    <div class="hint">🔒 Cookie 等同账号凭证，仅保存在本机内存用于本次抓取，<b>不会上传任何服务器</b>。请勿泄露给他人。</div>
+  </div>
+
+  <!-- 第二步：抓取 -->
+  <div class="card">
+    <h2>② 抓取博文</h2>
+    <div class="row">
+      <div>
+        <label>用户 ID（纯数字）</label>
+        <input type="text" id="userId" placeholder="例如 1892838392">
+        <div class="hint">在 m.weibo.cn 打开对方主页，地址栏 /u/ 后面的数字即用户 ID</div>
+      </div>
+      <div>
+        <label>抓取模式</label>
+        <select id="crawlerMode">
+          <option value="weibo">真实抓取（m.weibo.cn，需 Cookie）</option>
+          <option value="mock">模拟抓取（Mock，自测导出链路）</option>
+        </select>
+        <div class="hint">选「模拟」会生成假数据用于验证导出，不触网、不消耗真实请求。</div>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>每条请求间隔（秒）</label>
+        <input type="number" id="interval" value="20" min="0" step="1">
+        <div class="hint">默认 20 秒，新浪限流严格，这是稳定部落实测的安全值</div>
+      </div>
+      <div>
+        <label>本次最多抓多少页（0=抓到底）</label>
+        <input type="number" id="maxPages" value="0" min="0">
+        <div class="hint">每页约 10 条；先设个小值试跑更稳妥</div>
+      </div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="resume" checked> 断点续传（中断后从上次页码继续）</label>
+    </div>
+    <div class="btns">
+      <button id="btnStart">开始抓取</button>
+      <button id="btnStop" class="warn" disabled>停止</button>
+      <button id="btnSeed" class="ghost" title="直接往数据库灌一批模拟博文，用于测试导出">灌入模拟数据(自测)</button>
+    </div>
+    <div id="statusBar"></div>
+    <div class="prog" id="prog"><div></div></div>
+  </div>
+
+  <!-- 第三步：导出 -->
+  <div class="card">
+    <h2>③ 导出</h2>
+    <label>选择用户（从已抓取的列表中选）</label>
+    <select id="exportUser"><option value="">— 请先抓取或灌入数据 —</option></select>
+    <div class="checks">
+      <label><input type="checkbox" class="fmt" value="html" checked> HTML</label>
+      <label><input type="checkbox" class="fmt" value="md" checked> Markdown</label>
+      <label><input type="checkbox" class="fmt" value="pdf" checked> PDF</label>
+      <label><input type="checkbox" class="fmt" value="json" checked> JSON</label>
+      <label><input type="checkbox" class="fmt" value="txt" checked> TXT</label>
+    </div>
+    <div class="btns"><button id="btnExport">导出所选格式</button></div>
+    <div class="file-list" id="fileList"></div>
+    <div class="hint" id="exportHint"></div>
+  </div>
+
+  <!-- 合规提示 -->
+  <div class="card">
+    <h2>合规与安全提示</h2>
+    <div class="disclaimer">
+      本工具仅用于<b>个人备份自己有权访问的微博内容</b>。请勿用于商业用途或批量采集他人数据；
+      遵守微博用户协议与 robots 约定，控制抓取频率。Cookie 属敏感信息，谨防泄露。
+      数据仅存本机 <code>weibo.db</code>，导出文件存于 <code>exports/</code>。
+    </div>
+  </div>
+
+</div>
+<footer>极客港 jikegang.com · jikegang-weibo-export · 仅限个人备份，不得商用</footer>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+const API='';
+let pollTimer=null;
+
+function setBar(msg,cls){
+  const b=$('#statusBar');b.className='show '+(cls||'');b.innerHTML=msg;
+}
+function setProg(p){const el=$('#prog');el.className='prog'+(p>=0?' show':'');el.firstElementChild.style.width=Math.max(0,Math.min(100,p))+'%';}
+
+async function loadStatus(){
+  try{
+    const r=await fetch(API+'/api/status');const s=await r.json();
+    $('#ver').textContent='v'+s.version;
+    const fb=s.font&&s.font.fallback;
+    $('#dbBadge').className='tag';$('#dbBadge').textContent='已连接';
+    $('#statusLine').innerHTML=`数据库：<code>${s.db_path}</code> · 已有用户 <b>${s.db_users}</b> 个 · 导出目录 <code>${s.export_dir}</code>`
+      +(fb?` · ⚠️ PDF 中文字体未找到系统雅黑/宋体，已用内置字体兜底`:` · PDF 中文字体：${s.font.file||'内置'}`);
+    refreshUsers();
+  }catch(e){
+    $('#dbBadge').textContent='未连接';$('#statusLine').textContent='无法连接后端，请确认服务已启动。';
+  }
+}
+
+async function refreshUsers(){
+  try{
+    const r=await fetch(API+'/api/users');const d=await r.json();
+    const sel=$('#exportUser');sel.innerHTML='';
+    if(!d.users.length){sel.innerHTML='<option value="">— 请先抓取或灌入数据 —</option>';return;}
+    d.users.forEach(u=>{
+      const o=document.createElement('option');o.value=u.user_id;
+      o.textContent=`${u.screen_name||u.user_id}（ID ${u.user_id}，库内 ${u.posts_in_db} 条）`;
+      sel.appendChild(o);
+    });
+  }catch(e){}
+}
+
+function currentReq(){
+  return {
+    user_id:$('#userId').value.trim(),
+    cookie:$('#cookie').value,
+    crawler:$('#crawlerMode').value,
+    interval:parseFloat($('#interval').value)||0,
+    max_pages:parseInt($('#maxPages').value)||0,
+    resume:$('#resume').checked
+  };
+}
+
+async function startCrawl(){
+  const req=currentReq();
+  if(!req.user_id){setBar('请填写用户 ID','err');return;}
+  if(req.crawler==='weibo'&&!req.cookie){setBar('⚠️ 未填 Cookie，将以「未登录公开抓取」降级模式运行，可能只能抓到部分公开博文','warn');}
+  $('#btnStart').disabled=true;$('#btnStop').disabled=false;setProg(0);
+  setBar('任务启动中…','');
+  try{
+    const r=await fetch(API+'/api/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||'启动失败');
+    pollTimer=setInterval(pollJob,1200);
+  }catch(e){setBar('启动失败：'+e.message,'err');$('#btnStart').disabled=false;$('#btnStop').disabled=true;}
+}
+
+async function pollJob(){
+  try{
+    const r=await fetch(API+'/api/job');const {job}=await r.json();
+    if(!job)return;
+    const pct=job.total_in_db?Math.min(100,(job.pages_done/(job.pages_done+2))*100):0;
+    let html=`<b>${job.phase}</b> · 模式：${job.crawler}${job.logged_in?'(已登录)':'(未登录)'} · 当前第 ${job.current_page} 页 · 已抓 ${job.pages_done} 页 · 库内 ${job.total_in_db} 条<br><span style="color:var(--muted)">${job.last_event||''}</span>`;
+    const cls=job.status==='error'?'err':(job.status==='done'?'ok':'');
+    setBar(html,cls);
+    if(job.status==='running'){setProg(pct);}
+    else{
+      setProg(-1);clearInterval(pollTimer);pollTimer=null;
+      $('#btnStart').disabled=false;$('#btnStop').disabled=true;
+      if(job.status==='error')setBar('❌ 出错：'+(job.error||''),  'err');
+      else setBar(`✅ 完成：入库 ${job.total_posts} 条（${job.stopped_reason||''}）`,'ok');
+      refreshUsers();
+    }
+  }catch(e){}
+}
+
+async function stopJob(){await fetch(API+'/api/job/stop',{method:'POST'});setBar('已请求停止，当前页完成后退出（断点已保存）','warn');}
+
+async function seedMock(){
+  const uid=$('#userId').value.trim()||'1892838392';
+  setBar('正在灌入模拟数据…','');
+  try{
+    const r=await fetch(API+'/api/seed-mock',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:uid,total_pages:5,per_page:8})});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||'失败');
+    setBar(`✅ 已灌入 ${d.posts_inserted} 条模拟博文（用户 ${d.user.screen_name}），可直接测试导出`,'ok');
+    refreshUsers();$('#exportUser').value=uid;
+  }catch(e){setBar('灌入失败：'+e.message,'err');}
+}
+
+async function doExport(){
+  const uid=$('#exportUser').value;
+  if(!uid){setBar('请先选择用户','err');return;}
+  const fmts=[...$$('.fmt')].filter(c=>c.checked).map(c=>c.value);
+  if(!fmts.length){setBar('请至少选择一种导出格式','err');return;}
+  $('#btnExport').disabled=true;setBar('导出中…','');
+  try{
+    const r=await fetch(API+'/api/export',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:uid,formats:fmts})});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||'失败');
+    let h='';d.files.forEach(f=>{
+      const name=f.path.split(/[\\/]/).pop();
+      h+=`<div>📄 <a href="/files/${encodeURIComponent(name)}" download>${name}</a> — ${f.format.toUpperCase()} · ${(f.size/1024).toFixed(1)} KB · ${f.count} 条</div>`;
+    });
+    $('#fileList').innerHTML=h;
+    $('#exportHint').innerHTML=`文件已保存到 <code>${d.out_dir}</code>`;
+    setBar(`✅ 成功导出 ${d.files.length} 个文件`,'ok');
+  }catch(e){setBar('导出失败：'+e.message,'err');}
+  finally{$('#btnExport').disabled=false;}
+}
+
+$('#btnStart').onclick=startCrawl;
+$('#btnStop').onclick=stopJob;
+$('#btnSeed').onclick=seedMock;
+$('#btnExport').onclick=doExport;
+loadStatus();
+</script>
+</body>
+</html>

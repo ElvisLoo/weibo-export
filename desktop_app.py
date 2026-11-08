@@ -135,7 +135,7 @@ class WeiboExporterGUI:
         self.var_uid = tk.StringVar()
         ttk.Entry(frm_input, textvariable=self.var_uid, width=22, font=self.font_label).grid(
             row=row, column=2, sticky="w", pady=5)
-        ttk.Label(frm_input, text="纯数字，如 123456789", font=self.font_hint,
+        ttk.Label(frm_input, text="纯数字，如：123456789", font=self.font_hint,
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
         row += 1
@@ -147,8 +147,8 @@ class WeiboExporterGUI:
         self.cookie_text = tk.Text(frm_input, height=3, wrap="none",
                                    font=self.font_label, relief="solid", borderwidth=1)
         self.cookie_text.grid(row=row, column=2, sticky="we", pady=5)
-        ttk.Label(frm_input, text="（可选）粘贴网页 Cookie；不填仅抓公开博文", font=self.font_hint,
-                  foreground="gray", wraplength=222, justify="left").grid(
+        ttk.Label(frm_input, text="粘贴网页 Cookie\n不填仅抓公开博文", font=self.font_hint,
+                  foreground="gray", justify="left").grid(
             row=row, column=3, sticky="nw", pady=5, padx=(10, 0))
 
         row += 1
@@ -167,7 +167,7 @@ class WeiboExporterGUI:
                    command=lambda: self._nudge_pages(-1)).pack(side="left", padx=(6, 3))
         ttk.Button(pages_box, text="＋", width=3, style="Big.TButton",
                    command=lambda: self._nudge_pages(1)).pack(side="left", padx=3)
-        ttk.Label(frm_input, text="0 = 抓到底", font=self.font_hint,
+        ttk.Label(frm_input, text="0 = 抓取全部", font=self.font_hint,
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
         # --- 导出格式 ---
         frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=12)

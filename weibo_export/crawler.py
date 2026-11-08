@@ -159,6 +159,7 @@ class WeiboCrawler(BaseCrawler):
         super().__init__(*a, **kw)
         import requests  # 延迟导入，便于 mock 环境无 requests 也能跑其它模块
 
+        self._requests = requests
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": ("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
@@ -170,11 +171,49 @@ class WeiboCrawler(BaseCrawler):
         if self.cookie:
             self.session.headers["Cookie"] = self.cookie
 
+    def _get_with_retry(self, url: str, max_retries: int = 3) -> Any:
+        """带指数退避 + 随机抖动的请求，抗瞬时网络错误与限流。
+
+        可重试：超时 / 连接错误 / HTTP 5xx / HTTP 418（新浪限流）。
+        不重试：HTTP 404 等客户端错误（非瞬时问题）。
+        每次重试前检查 stop_flag，用户点停止能立刻退出。
+        """
+        import random
+        last_err: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            if self.stop_flag():
+                raise CrawlerError("用户请求停止")
+            try:
+                r = self.session.get(url, timeout=15)
+            except self._requests.exceptions.Timeout as e:
+                last_err = e
+            except self._requests.exceptions.ConnectionError as e:
+                last_err = e
+            else:
+                if r.status_code == 418:
+                    last_err = CrawlerError("被限流(HTTP 418)")
+                elif 500 <= r.status_code < 600:
+                    last_err = CrawlerError(f"服务器错误(HTTP {r.status_code})")
+                else:
+                    return r  # 成功（含 4xx 等非瞬时错误，交给上层判断）
+            # 走到这里说明本次失败；若还有重试机会则退避
+            if attempt < max_retries:
+                backoff = 3 * (2 ** attempt) + random.uniform(0, 2)  # 3,7,15 +抖动
+                self._emit({"type": "retry", "attempt": attempt + 1,
+                            "max_retries": max_retries, "wait": round(backoff, 1),
+                            "error": str(last_err)})
+                if self.stop_flag():
+                    raise CrawlerError("用户请求停止")
+                time.sleep(backoff)
+        raise CrawlerError(f"多次重试仍失败：{last_err}")
+
     def get_user(self, user_id: str) -> Dict[str, Any]:
         url = f"{BASE_URL}/api/container/getIndex?containerid=100505{user_id}"
         try:
-            r = self.session.get(url, timeout=15)
+            r = self._get_with_retry(url)
             data = r.json()
+        except CrawlerError:
+            raise  # 重试耗尽/用户停止：向上抛，让主流程记录
         except Exception as e:  # 网络/解析失败时返回最小信息，不阻断主流程
             return {"user_id": user_id, "screen_name": f"user_{user_id}", "description": "",
                     "statuses_count": 0, "followers_count": 0, "_error": str(e)}
@@ -190,9 +229,7 @@ class WeiboCrawler(BaseCrawler):
     def fetch_page(self, user_id: str, page: int) -> Dict[str, Any]:
         url = (f"{BASE_URL}/api/container/getIndex?containerid="
                f"107603{user_id}&page_type=01&page={page}")
-        r = self.session.get(url, timeout=15)
-        if r.status_code == 418:
-            raise CrawlerError("被限流(HTTP 418)，请增大请求间隔或稍后重试")
+        r = self._get_with_retry(url)
         data = r.json()
         cards = (data.get("data") or {}).get("cards", []) or []
         posts: List[Dict[str, Any]] = []

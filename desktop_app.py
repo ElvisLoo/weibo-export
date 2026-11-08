@@ -193,8 +193,15 @@ class WeiboExporterGUI:
         self.btn_stop = ttk.Button(frm_btn, text="停止", command=self._stop, state="disabled")
         self.btn_stop.pack(side="left")
 
-        ttk.Label(frm_btn, text=f"导出目录: {_data_dir()}", font=self.font_hint,
-                  foreground="gray").pack(side="right")
+        # --- 导出目录：单独占一整行，完整显示路径，不被按钮挤压截断 ---
+        frm_dir = ttk.Frame(self.root, padding=(14, 0, 14, 8))
+        frm_dir.pack(fill="x")
+        ttk.Label(frm_dir, text="导出目录：", font=self.font_hint,
+                  foreground="gray").pack(side="left")
+        ttk.Label(frm_dir, text=_data_dir(), font=self.font_hint,
+                  foreground="gray").pack(side="left")
+        ttk.Button(frm_dir, text="打开目录", command=lambda: self._open_dir(_data_dir())
+                   ).pack(side="right")
 
         # --- 进度 ---
         frm_progress = ttk.LabelFrame(self.root, text=" 3. 任务进度 ", padding=12)
@@ -213,6 +220,14 @@ class WeiboExporterGUI:
         self.log_text.pack(fill="both", expand=True, pady=(4, 0))
 
     # ================= 日志 =================
+
+    def _open_dir(self, path: str):
+        """在系统文件管理器中打开目录（Windows）。"""
+        try:
+            os.makedirs(path, exist_ok=True)
+            os.startfile(path)  # Windows 专用
+        except Exception as e:
+            self._log(f"无法打开目录：{e}")
 
     def _log(self, msg: str):
         self.log_text.config(state="normal")
@@ -299,6 +314,13 @@ class WeiboExporterGUI:
                 f"已完成 {self.pages_fetched} 页（当前数据页 {state.get('page', '?')}），"
                 f"新增 {state.get('new_posts', 0)} 条，累计入库 {state.get('total_in_db', 0)} 条")
             self._log(f"第 {state.get('page', '?')} 页完成：新增 {state.get('new_posts', 0)} 条")
+        elif t == "retry":
+            # 抓取遇到瞬时错误正在重试，给用户明确反馈（而不是看起来卡住）
+            self._log(
+                f"⚠ 请求失败，第 {state.get('attempt', '?')}/{state.get('max_retries', '?')} 次重试，"
+                f"等待 {state.get('wait', '?')} 秒（{state.get('error', '')}）")
+            self._set_progress(
+                f"网络波动，第 {state.get('attempt', '?')} 次重试中...")
 
     def _ui_idle(self):
         try:

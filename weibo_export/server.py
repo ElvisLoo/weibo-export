@@ -64,7 +64,7 @@ class ExportReq(BaseModel):
 
 
 class SeedReq(BaseModel):
-    user_id: str = "1892838392"
+    user_id: str = "123456789"
     total_pages: int = 5
     per_page: int = 8
 

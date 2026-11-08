@@ -91,7 +91,7 @@ footer{text-align:center;color:#aaa;font-size:12px;padding:24px}
     <div class="row">
       <div>
         <label>用户 ID（纯数字）</label>
-        <input type="text" id="userId" placeholder="例如 1892838392">
+        <input type="text" id="userId" placeholder="例如 123456789">
         <div class="hint">在 m.weibo.cn 打开对方主页，地址栏 /u/ 后面的数字即用户 ID</div>
       </div>
       <div>
@@ -240,7 +240,7 @@ async function pollJob(){
 async function stopJob(){await fetch(API+'/api/job/stop',{method:'POST'});setBar('已请求停止，当前页完成后退出（断点已保存）','warn');}
 
 async function seedMock(){
-  const uid=$('#userId').value.trim()||'1892838392';
+  const uid=$('#userId').value.trim()||'123456789';
   setBar('正在灌入模拟数据…','');
   try{
     const r=await fetch(API+'/api/seed-mock',{method:'POST',headers:{'Content-Type':'application/json'},

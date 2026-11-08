@@ -31,7 +31,7 @@ class MockCrawler(BaseCrawler):
     name = "mock"
 
     def __init__(self, total_pages: int = 5, per_page: int = 8,
-                 user_id: str = "1892838392", screen_name: str = "极客港_测试用户",
+                 user_id: str = "123456789", screen_name: str = "极客港_测试用户",
                  **kw: Any) -> None:
         kw.setdefault("interval", 0)
         super().__init__(**kw)
@@ -76,7 +76,7 @@ class MockCrawler(BaseCrawler):
         return {"posts": posts, "ok": 1}
 
 
-def seed_mock_db(db_path: str, user_id: str = "1892838392",
+def seed_mock_db(db_path: str, user_id: str = "123456789",
                  total_pages: int = 5, per_page: int = 8) -> Dict[str, Any]:
     """直接用 mock 数据灌满一个 weibo.db，用于端到端测试导出（不经抓取）。"""
     conn = db.connect(db_path)

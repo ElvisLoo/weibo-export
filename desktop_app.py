@@ -108,7 +108,7 @@ class WeiboExporterGUI:
         ttk.Label(frm_input, text="微博用户 ID：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
         self.var_uid = tk.StringVar()
         ttk.Entry(frm_input, textvariable=self.var_uid, width=26, font=self.font_label).grid(row=row, column=1, sticky="w", pady=5)
-        ttk.Label(frm_input, text="(纯数字，如 1892838392)", font=self.font_hint,
+        ttk.Label(frm_input, text="(纯数字，如 123456789)", font=self.font_hint,
                   foreground="gray").grid(row=row, column=2, sticky="w", pady=5, padx=(8, 0))
 
         row += 1

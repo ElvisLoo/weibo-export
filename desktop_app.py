@@ -1,88 +1,288 @@
-"""极客港 · 微博导出工具 —— Windows 桌面版入口（双击运行）。
+"""极客港 · 微博导出工具 —— 纯本地桌面版（无 Web 服务、无 WebView2 依赖）。
 
-流程：后台启动 FastAPI 服务 -> 打开原生应用窗口加载界面。
-打包后（PyInstaller frozen）资源走 paths.py 定位，数据放用户目录。
+架构：
+    tkinter 原生 GUI（Python 自带，Win10/11 无需额外运行时）
+    └─ 后台线程跑 crawler（20 秒限速、断点续传）
+    └─ 抓取完成后自动跑 exporter 生成 5 格式到用户目录
+    └─ 进度用 root.after() 从后台线程安全更新
 
-实现说明：用 pywebview 提供原生窗口（Edge WebView2 内核，Win10/11 自带），
-窗口关掉时自动结束后端进程。
+数据目录：
+    DB:    ~/Documents/微博导出/weibo.db
+    导出:  ~/Documents/微博导出/
+
+打包：
+    pyinstaller desktop_gui.spec --noconfirm
+    产物: dist/极客港微博导出/极客港微博导出.exe（onedir）
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
-import webbrowser
+import traceback
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from tkinter.scrolledtext import ScrolledText
 
 
-def _wait_backend(url: str, retries: int = 60, delay: float = 0.25) -> bool:
-    import urllib.request
-    for _ in range(retries):
+def _data_dir() -> str:
+    """数据目录：文档/微博导出/"""
+    base = os.path.join(os.path.expanduser("~"), "Documents", "微博导出")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _log_dir() -> str:
+    return _data_dir()
+
+
+def _write_log(msg: str):
+    try:
+        with open(os.path.join(_log_dir(), "运行日志.txt"), "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {msg.rstrip()}\n")
+    except Exception:
+        pass
+
+
+class WeiboExporterGUI:
+    def __init__(self, root: tk.Tk):
+        from weibo_export import __version__
+        self.root = root
+        root.title(f"极客港 · 微博导出工具 v{__version__}")
+        root.geometry("760x640")
+        root.minsize(680, 560)
+
+        # 状态
+        self.crawl_thread = None
+        self.export_thread = None
+        self.stop_flag = threading.Event()
+        self.job_state = {}  # 后台线程写入，UI 线程读取
+        self.job_lock = threading.Lock()
+
+        self._build_ui()
+        self._log("启动完成")
+
+    # ================= UI 构建 =================
+
+    def _build_ui(self):
+        # --- 输入区 ---
+        frm_input = ttk.LabelFrame(self.root, text=" 1. 输入信息 ", padding=10)
+        frm_input.pack(fill="x", padx=12, pady=(12, 6))
+
+        row = 0
+        ttk.Label(frm_input, text="微博用户 ID：").grid(row=row, column=0, sticky="w", pady=3)
+        self.var_uid = tk.StringVar()
+        ttk.Entry(frm_input, textvariable=self.var_uid, width=24).grid(row=row, column=1, sticky="w", pady=3)
+        ttk.Label(frm_input, text="(纯数字，如 1892838392)",
+                  foreground="gray").grid(row=row, column=2, sticky="w", pady=3, padx=(6, 0))
+
+        row += 1
+        ttk.Label(frm_input, text="Cookie（可选）：").grid(row=row, column=0, sticky="w", pady=3)
+        self.var_cookie = tk.StringVar()
+        entry_cookie = ttk.Entry(frm_input, textvariable=self.var_cookie, width=48)
+        entry_cookie.grid(row=row, column=1, columnspan=2, sticky="we", pady=3)
+        ttk.Label(frm_input, text="有 Cookie 抓全量，无则抓公开",
+                  foreground="gray").grid(row=row, column=3, sticky="w", pady=3, padx=(6, 0))
+
+        row += 1
+        ttk.Label(frm_input, text="最大页数：").grid(row=row, column=0, sticky="w", pady=3)
+        self.var_max_pages = tk.IntVar(value=0)
+        ttk.Spinbox(frm_input, from_=0, to=9999, textvariable=self.var_max_pages,
+                    width=8).grid(row=row, column=1, sticky="w", pady=3)
+        ttk.Label(frm_input, text="0 = 抓到底", foreground="gray").grid(
+            row=row, column=2, sticky="w", pady=3, padx=(6, 0))
+
+        frm_input.columnconfigure(1, weight=1)
+
+        # --- 导出格式 ---
+        frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=10)
+        frm_fmt.pack(fill="x", padx=12, pady=6)
+
+        self.fmt_vars = {}
+        for i, fmt in enumerate(["html", "md", "pdf", "json", "txt"]):
+            v = tk.BooleanVar(value=True)
+            self.fmt_vars[fmt] = v
+            ttk.Checkbutton(frm_fmt, text=fmt.upper(), variable=v).grid(
+                row=0, column=i, sticky="w", padx=8)
+
+        # --- 操作按钮 ---
+        frm_btn = ttk.Frame(self.root, padding=(12, 6))
+        frm_btn.pack(fill="x")
+
+        self.btn_crawl = ttk.Button(frm_btn, text="抓取微博", command=self._start_crawl)
+        self.btn_crawl.pack(side="left", padx=(0, 8))
+
+        self.btn_export = ttk.Button(frm_btn, text="导出文件", command=self._start_export)
+        self.btn_export.pack(side="left", padx=(0, 8))
+
+        self.btn_stop = ttk.Button(frm_btn, text="停止", command=self._stop, state="disabled")
+        self.btn_stop.pack(side="left")
+
+        ttk.Label(frm_btn, text=f"导出目录: {_data_dir()}",
+                  foreground="gray").pack(side="right")
+
+        # --- 进度 ---
+        frm_progress = ttk.LabelFrame(self.root, text=" 3. 进度 ", padding=10)
+        frm_progress.pack(fill="both", expand=True, padx=12, pady=6)
+
+        self.var_progress = tk.StringVar(value="就绪")
+        ttk.Label(frm_progress, textvariable=self.var_progress).pack(anchor="w", pady=3)
+
+        self.log_text = ScrolledText(frm_progress, height=12, state="disabled",
+                                     font=("Consolas", 9), bg="#1e1e1e", fg="#d4d4d4")
+        self.log_text.pack(fill="both", expand=True, pady=(6, 0))
+
+    # ================= 日志 =================
+
+    def _log(self, msg: str):
+        self.log_text.config(state="normal")
+        ts = time.strftime("%H:%M:%S")
+        self.log_text.insert("end", f"[{ts}] {msg}\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+        _write_log(msg)
+
+    def _set_progress(self, text: str):
+        self.var_progress.set(text)
+
+    # ================= 抓取 =================
+
+    def _start_crawl(self):
+        uid = self.var_uid.get().strip()
+        if not uid.isdigit():
+            messagebox.showwarning("提示", "请输入纯数字微博用户 ID")
+            return
+        cookie = self.var_cookie.get().strip()
+        max_pages = self.var_max_pages.get()
+
+        self.btn_crawl.config(state="disabled")
+        self.btn_export.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.stop_flag.clear()
+
+        self.crawl_thread = threading.Thread(
+            target=self._crawl_worker,
+            args=(uid, cookie, max_pages),
+            daemon=True,
+        )
+        self.crawl_thread.start()
+
+    def _crawl_worker(self, uid: str, cookie: str, max_pages: int):
+        from weibo_export import db, crawler as crawler_mod
+
+        def progress_cb(payload: dict):
+            with self.job_lock:
+                self.job_state.update(payload)
+            # 触发 UI 更新（从后台线程安全调用）
+            self.root.after(0, lambda: self._update_progress_ui())
+
         try:
-            with urllib.request.urlopen(url, timeout=1) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            time.sleep(delay)
-    return False
+            db_path = os.path.join(_data_dir(), "weibo.db")
+            conn = db.connect(db_path)
 
+            crawler = crawler_mod.build_crawler(
+                kind="weibo",
+                cookie=cookie,
+                interval=20,
+                progress=progress_cb,
+                stop_flag=lambda: self.stop_flag.is_set(),
+            )
+            result = crawler.run(conn, uid, max_pages=max_pages, resume=True)
+            conn.close()
 
-def _backend_thread(url: str):
-    """在新线程里跑 uvicorn（阻塞），供桌面入口调用。"""
-    from weibo_export.server import app
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=_port_of(url), log_level="warning")
+            self.root.after(0, lambda: self._log(
+                f"抓取完成：入库 {result.total_posts} 条，{result.pages_fetched} 页"
+                + (f"，原因：{result.stopped_reason}" if result.stopped_reason else "")
+            ))
+            self.root.after(0, lambda: self._set_progress(
+                f"抓取完成：{result.total_posts} 条博文已入库"))
+        except Exception as e:
+            self.root.after(0, lambda: self._log(f"抓取失败：{e}"))
+            self.root.after(0, lambda: self._set_progress(f"抓取出错：{e}"))
+            _write_log(f"抓取异常：{traceback.format_exc()}")
+        finally:
+            self.root.after(0, lambda: self._ui_idle())
 
+    def _update_progress_ui(self):
+        with self.job_lock:
+            state = dict(self.job_state)
+        t = state.get("type", "")
+        if t == "page_start":
+            self._set_progress(f"正在抓取第 {state.get('page', '?')} 页...")
+        elif t == "page_done":
+            self._set_progress(
+                f"第 {state.get('page', '?')} 页完成，新增 {state.get('new_posts', 0)} 条，"
+                f"累计 {state.get('total_in_db', 0)} 条")
+            self._log(f"第 {state.get('page', '?')} 页完成")
 
-def _port_of(url: str) -> int:
-    from urllib.parse import urlparse
-    return urlparse(url).port or 8765
+    def _ui_idle(self):
+        self.btn_crawl.config(state="normal")
+        self.btn_export.config(state="normal")
+        self.btn_stop.config(state="disabled")
+
+    # ================= 导出 =================
+
+    def _start_export(self):
+        uid = self.var_uid.get().strip()
+        if not uid.isdigit():
+            messagebox.showwarning("提示", "请先输入微博用户 ID")
+            return
+        fmts = [f for f, v in self.fmt_vars.items() if v.get()]
+        if not fmts:
+            messagebox.showwarning("提示", "请至少选择一种导出格式")
+            return
+
+        self.btn_crawl.config(state="disabled")
+        self.btn_export.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.stop_flag.clear()
+
+        self.export_thread = threading.Thread(
+            target=self._export_worker, args=(uid, fmts), daemon=True,
+        )
+        self.export_thread.start()
+
+    def _export_worker(self, uid: str, fmts: list):
+        from weibo_export import db, exporter
+
+        try:
+            db_path = os.path.join(_data_dir(), "weibo.db")
+            conn = db.connect(db_path)
+            if db.count_posts(conn, uid) == 0:
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "无数据", f"用户 {uid} 在本地数据库中暂无博文，请先抓取。"))
+                return
+            out_dir = _data_dir()
+            results = exporter.export_all(conn, uid, out_dir, fmts)
+            conn.close()
+            files = [f"{r['format']}: {os.path.basename(r['path'])} ({r['size']} B)"
+                     for r in results]
+            self.root.after(0, lambda: self._log("导出完成：\n  " + "\n  ".join(files)))
+            self.root.after(0, lambda: self._set_progress(
+                f"导出完成，共 {len(results)} 个文件 → {out_dir}"))
+            self.root.after(0, lambda: messagebox.showinfo(
+                "导出完成", f"已生成 {len(results)} 个文件到：\n{out_dir}"))
+        except Exception as e:
+            self.root.after(0, lambda: self._log(f"导出失败：{e}"))
+            self.root.after(0, lambda: self._set_progress(f"导出出错：{e}"))
+            _write_log(f"导出异常：{traceback.format_exc()}")
+        finally:
+            self.root.after(0, lambda: self._ui_idle())
+
+    # ================= 停止 =================
+
+    def _stop(self):
+        self.stop_flag.set()
+        self._log("已请求停止，等待当前操作完成...")
+        self._set_progress("正在停止...")
 
 
 def main() -> None:
-    PORT = 8765
-    URL = f"http://127.0.0.1:{PORT}/"
-
-    # 1) 后台线程启动服务
-    t = threading.Thread(target=_backend_thread, args=(URL,), daemon=True)
-    t.start()
-
-    # 2) 等服务就绪
-    if not _wait_backend(URL):
-        # 兜底：服务起不来就退回浏览器方式并提示
-        webbrowser.open(URL)
-        print("后端服务启动超时，已在浏览器打开；若空白请稍后刷新。")
-        try:
-            while t.is_alive():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
-        return
-
-    # 3) 打开原生窗口
-    try:
-        import webview  # pywebview
-        import os
-        _ico = os.path.join(sys._MEIPASS, "app.ico") if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS") \
-            else os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "app.ico")
-        webview.create_window(
-            "极客港 · 微博导出工具",
-            URL,
-            width=1080,
-            height=900,
-            min_size=(760, 600),
-            icon=_ico if os.path.exists(_ico) else None,
-        )
-        webview.start()
-    except Exception:
-        # pywebview 不可用时退回默认浏览器，保证功能可用
-        webbrowser.open(URL)
-        print(f"已用默认浏览器打开：{URL}（关闭此窗口请结束本程序）")
-        try:
-            while t.is_alive():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            pass
+    root = tk.Tk()
+    app = WeiboExporterGUI(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":

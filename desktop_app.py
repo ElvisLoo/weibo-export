@@ -51,88 +51,125 @@ class WeiboExporterGUI:
         from weibo_export import __version__
         self.root = root
         root.title(f"极客港 · 微博导出工具 v{__version__}")
-        root.geometry("760x640")
-        root.minsize(680, 560)
+        root.geometry("820x720")
+        root.minsize(720, 620)
+        # 窗口图标（打包后从 _MEIPASS 加载，源码运行从 assets/ 加载）
+        self._set_window_icon(root)
 
         # 状态
         self.crawl_thread = None
         self.export_thread = None
         self.stop_flag = threading.Event()
-        self.job_state = {}  # 后台线程写入，UI 线程读取
+        self.job_state = {}
         self.job_lock = threading.Lock()
+        self.pages_fetched = 0  # 已成功抓取页数（平滑进度用）
 
         self._build_ui()
         self._log("启动完成")
 
+    def _set_window_icon(self, root):
+        """设置窗口左上角图标（微博眼睛）。"""
+        try:
+            if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                icon = os.path.join(sys._MEIPASS, "app.ico")
+            else:
+                icon = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "assets", "app.ico")
+            if os.path.exists(icon):
+                root.iconbitmap(icon)
+        except Exception:
+            pass  # 图标加载失败不影响主功能
+
     # ================= UI 构建 =================
 
     def _build_ui(self):
+        # 全局字体：按用户偏好放大（16px 主体、大号日志字体）
+        self.font_label = ("Microsoft YaHei UI", 12)
+        self.font_hint = ("Microsoft YaHei UI", 10)
+        self.font_btn = ("Microsoft YaHei UI", 12, "bold")
+        self.font_log = ("Consolas", 11)
+        self.font_progress = ("Microsoft YaHei UI", 13, "bold")
+
+        style = ttk.Style()
+        try:
+            style.configure("TLabel", font=self.font_label)
+            style.configure("TButton", font=self.font_btn, padding=6)
+            style.configure("TCheckbutton", font=self.font_label)
+            style.configure("TLabelframe.Label", font=self.font_label)
+            style.configure("TEntry", font=self.font_label)
+        except Exception:
+            pass
+
         # --- 输入区 ---
-        frm_input = ttk.LabelFrame(self.root, text=" 1. 输入信息 ", padding=10)
-        frm_input.pack(fill="x", padx=12, pady=(12, 6))
+        frm_input = ttk.LabelFrame(self.root, text=" 1. 输入信息 ", padding=12)
+        frm_input.pack(fill="x", padx=14, pady=(14, 8))
 
         row = 0
-        ttk.Label(frm_input, text="微博用户 ID：").grid(row=row, column=0, sticky="w", pady=3)
+        ttk.Label(frm_input, text="微博用户 ID：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
         self.var_uid = tk.StringVar()
-        ttk.Entry(frm_input, textvariable=self.var_uid, width=24).grid(row=row, column=1, sticky="w", pady=3)
-        ttk.Label(frm_input, text="(纯数字，如 1892838392)",
-                  foreground="gray").grid(row=row, column=2, sticky="w", pady=3, padx=(6, 0))
+        ttk.Entry(frm_input, textvariable=self.var_uid, width=26, font=self.font_label).grid(row=row, column=1, sticky="w", pady=5)
+        ttk.Label(frm_input, text="(纯数字，如 1892838392)", font=self.font_hint,
+                  foreground="gray").grid(row=row, column=2, sticky="w", pady=5, padx=(8, 0))
 
         row += 1
-        ttk.Label(frm_input, text="Cookie（可选）：").grid(row=row, column=0, sticky="w", pady=3)
+        ttk.Label(frm_input, text="Cookie（可选）：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
         self.var_cookie = tk.StringVar()
-        entry_cookie = ttk.Entry(frm_input, textvariable=self.var_cookie, width=48)
-        entry_cookie.grid(row=row, column=1, columnspan=2, sticky="we", pady=3)
-        ttk.Label(frm_input, text="有 Cookie 抓全量，无则抓公开",
-                  foreground="gray").grid(row=row, column=3, sticky="w", pady=3, padx=(6, 0))
+        ttk.Entry(frm_input, textvariable=self.var_cookie, width=48, font=self.font_label).grid(row=row, column=1, columnspan=2, sticky="we", pady=5)
+        ttk.Label(frm_input, text="有 Cookie 抓全量，无则抓公开", font=self.font_hint,
+                  foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(8, 0))
 
         row += 1
-        ttk.Label(frm_input, text="最大页数：").grid(row=row, column=0, sticky="w", pady=3)
+        ttk.Label(frm_input, text="最大页数：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
         self.var_max_pages = tk.IntVar(value=0)
         ttk.Spinbox(frm_input, from_=0, to=9999, textvariable=self.var_max_pages,
-                    width=8).grid(row=row, column=1, sticky="w", pady=3)
-        ttk.Label(frm_input, text="0 = 抓到底", foreground="gray").grid(
-            row=row, column=2, sticky="w", pady=3, padx=(6, 0))
+                    width=9, font=self.font_label).grid(row=row, column=1, sticky="w", pady=5)
+        ttk.Label(frm_input, text="0 = 抓到底", font=self.font_hint, foreground="gray").grid(
+            row=row, column=2, sticky="w", pady=5, padx=(8, 0))
 
         frm_input.columnconfigure(1, weight=1)
 
         # --- 导出格式 ---
-        frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=10)
-        frm_fmt.pack(fill="x", padx=12, pady=6)
+        frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=12)
+        frm_fmt.pack(fill="x", padx=14, pady=8)
 
         self.fmt_vars = {}
         for i, fmt in enumerate(["html", "md", "pdf", "json", "txt"]):
             v = tk.BooleanVar(value=True)
             self.fmt_vars[fmt] = v
             ttk.Checkbutton(frm_fmt, text=fmt.upper(), variable=v).grid(
-                row=0, column=i, sticky="w", padx=8)
+                row=0, column=i, sticky="w", padx=10)
 
         # --- 操作按钮 ---
-        frm_btn = ttk.Frame(self.root, padding=(12, 6))
+        frm_btn = ttk.Frame(self.root, padding=(14, 8))
         frm_btn.pack(fill="x")
 
         self.btn_crawl = ttk.Button(frm_btn, text="抓取微博", command=self._start_crawl)
-        self.btn_crawl.pack(side="left", padx=(0, 8))
+        self.btn_crawl.pack(side="left", padx=(0, 10))
 
         self.btn_export = ttk.Button(frm_btn, text="导出文件", command=self._start_export)
-        self.btn_export.pack(side="left", padx=(0, 8))
+        self.btn_export.pack(side="left", padx=(0, 10))
 
         self.btn_stop = ttk.Button(frm_btn, text="停止", command=self._stop, state="disabled")
         self.btn_stop.pack(side="left")
 
-        ttk.Label(frm_btn, text=f"导出目录: {_data_dir()}",
+        ttk.Label(frm_btn, text=f"导出目录: {_data_dir()}", font=self.font_hint,
                   foreground="gray").pack(side="right")
 
         # --- 进度 ---
-        frm_progress = ttk.LabelFrame(self.root, text=" 3. 进度 ", padding=10)
-        frm_progress.pack(fill="both", expand=True, padx=12, pady=6)
+        frm_progress = ttk.LabelFrame(self.root, text=" 3. 进度 ", padding=12)
+        frm_progress.pack(fill="both", expand=True, padx=14, pady=8)
 
         self.var_progress = tk.StringVar(value="就绪")
-        ttk.Label(frm_progress, textvariable=self.var_progress).pack(anchor="w", pady=3)
+        ttk.Label(frm_progress, textvariable=self.var_progress,
+                  font=self.font_progress).pack(anchor="w", pady=4)
 
-        self.log_text = ScrolledText(frm_progress, height=12, state="disabled",
-                                     font=("Consolas", 9), bg="#1e1e1e", fg="#d4d4d4")
-        self.log_text.pack(fill="both", expand=True, pady=(6, 0))
+        # 进度条：让用户看到连续推进
+        self.progress_bar = ttk.Progressbar(frm_progress, mode="indeterminate", length=200)
+        self.progress_bar.pack(fill="x", pady=(0, 6))
+
+        self.log_text = ScrolledText(frm_progress, height=13, state="disabled",
+                                     font=self.font_log, bg="#1e1e1e", fg="#d4d4d4")
+        self.log_text.pack(fill="both", expand=True, pady=(4, 0))
 
     # ================= 日志 =================
 
@@ -161,6 +198,9 @@ class WeiboExporterGUI:
         self.btn_export.config(state="disabled")
         self.btn_stop.config(state="normal")
         self.stop_flag.clear()
+        self.pages_fetched = 0
+        self._set_progress("正在启动抓取...")
+        self.progress_bar.start(12)
 
         self.crawl_thread = threading.Thread(
             target=self._crawl_worker,
@@ -210,14 +250,20 @@ class WeiboExporterGUI:
             state = dict(self.job_state)
         t = state.get("type", "")
         if t == "page_start":
+            self.progress_bar.start(12)  # 进度条动起来
             self._set_progress(f"正在抓取第 {state.get('page', '?')} 页...")
         elif t == "page_done":
+            self.pages_fetched += 1
             self._set_progress(
-                f"第 {state.get('page', '?')} 页完成，新增 {state.get('new_posts', 0)} 条，"
-                f"累计 {state.get('total_in_db', 0)} 条")
-            self._log(f"第 {state.get('page', '?')} 页完成")
+                f"已完成 {self.pages_fetched} 页（当前数据页 {state.get('page', '?')}），"
+                f"新增 {state.get('new_posts', 0)} 条，累计入库 {state.get('total_in_db', 0)} 条")
+            self._log(f"第 {state.get('page', '?')} 页完成：新增 {state.get('new_posts', 0)} 条")
 
     def _ui_idle(self):
+        try:
+            self.progress_bar.stop()
+        except Exception:
+            pass
         self.btn_crawl.config(state="normal")
         self.btn_export.config(state="normal")
         self.btn_stop.config(state="disabled")

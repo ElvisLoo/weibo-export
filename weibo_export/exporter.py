@@ -111,6 +111,14 @@ def _parse_retweet(p: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         j = json.loads(raw) if isinstance(raw, str) else raw
     except Exception:
         return None
+    # 双重序列化兼容：db 里 raw 有时被多套一层 JSON
+    if isinstance(j, str):
+        try:
+            j = json.loads(j)
+        except Exception:
+            return None
+    if not isinstance(j, dict):
+        return None
     rt = j.get("retweeted_status")
     if not isinstance(rt, dict):
         return None
@@ -424,7 +432,8 @@ def _export_txt(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 
 # ---------------- JSON ----------------
 
-def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str) -> str:
+def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
+                 url_map: Optional[Dict[str, str]] = None) -> str:
     payload = {
         "brand": "极客港 jikegang.com",
         "tool": "jikegang-weibo-export",
@@ -456,7 +465,8 @@ def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str) -
 
 # ---------------- PDF ----------------
 
-def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str) -> str:
+def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
+                url_map: Optional[Dict[str, str]] = None) -> str:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
@@ -496,13 +506,19 @@ def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str) ->
         """
         flows: List[Any] = []
         for u in urls[:9]:
+            # 本地化图片：把相对路径 media/xxx 解析成绝对路径供 reportlab 读取
+            local = u
+            if u.startswith(_MEDIA_DIR_NAME + "/") and url_map:
+                cand = os.path.join(os.path.dirname(path), u)
+                if os.path.exists(cand):
+                    local = cand
             if not re.search(r"\.(jpe?g|png)(\?|$)", u, re.I):
                 # GIF 等不支持的格式：记为链接
                 flows.append(Paragraph(esc(f"[动图] {u}"), stat))
                 flows.append(Spacer(1, 2))
                 continue
             try:
-                img = Image(u, width=max_img_w, height=max_img_w * 0.75)
+                img = Image(local, width=max_img_w, height=max_img_w * 0.75)
                 img.hAlign = "LEFT"
                 flows.append(img)
                 flows.append(Spacer(1, 3))
@@ -514,7 +530,7 @@ def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str) ->
     story = [Paragraph(esc(f"{user.get('screen_name','')} 的微博备份"), h1),
              Paragraph(esc(f"用户ID：{user.get('user_id','')}　微博数：{len(posts)}"), sub),
              Spacer(1, 4)]
-    for p in _build_view(posts):
+    for p in _build_view(posts, url_map):
         story.append(Paragraph(esc(p.get("created_at", "")), post_h))
         story.append(Paragraph(esc(p["text"]).replace("\n", "<br/>"), body))
         if p["pic_urls"]:

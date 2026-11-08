@@ -51,8 +51,8 @@ class WeiboExporterGUI:
         from weibo_export import __version__
         self.root = root
         root.title(f"极客港 · 微博导出工具 v{__version__}")
-        root.geometry("820x720")
-        root.minsize(720, 620)
+        root.geometry("920x800")
+        root.minsize(800, 680)
         # 窗口图标（打包后从 _MEIPASS 加载，源码运行从 assets/ 加载）
         self._set_window_icon(root)
 
@@ -83,12 +83,13 @@ class WeiboExporterGUI:
     # ================= UI 构建 =================
 
     def _build_ui(self):
-        # 全局字体：按用户偏好放大（16px 主体、大号日志字体）
-        self.font_label = ("Microsoft YaHei UI", 12)
-        self.font_hint = ("Microsoft YaHei UI", 10)
-        self.font_btn = ("Microsoft YaHei UI", 12, "bold")
-        self.font_log = ("Consolas", 11)
-        self.font_progress = ("Microsoft YaHei UI", 13, "bold")
+        # 全局字体：按用户偏好放大（在 v1.1.2 基础上再大一号）
+        self.font_label = ("Microsoft YaHei UI", 13)
+        self.font_hint = ("Microsoft YaHei UI", 11)
+        self.font_btn = ("Microsoft YaHei UI", 13, "bold")
+        # 日志用系统默认中文字体（Consolas 无中文字形，中文会回退渲染导致发虚）
+        self.font_log = ("Microsoft YaHei UI", 12)
+        self.font_progress = ("Microsoft YaHei UI", 14, "bold")
 
         style = ttk.Style()
         try:
@@ -114,9 +115,14 @@ class WeiboExporterGUI:
         row += 1
         ttk.Label(frm_input, text="Cookie（可选）：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
         self.var_cookie = tk.StringVar()
-        ttk.Entry(frm_input, textvariable=self.var_cookie, width=48, font=self.font_label).grid(row=row, column=1, columnspan=2, sticky="we", pady=5)
-        ttk.Label(frm_input, text="有 Cookie 抓全量，无则抓公开", font=self.font_hint,
-                  foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(8, 0))
+        # Cookie 加宽并支持横向滚动（Cookie 通常很长，要看清大部分内容）
+        cookie_frame = ttk.Frame(frm_input)
+        cookie_frame.grid(row=row, column=1, columnspan=3, sticky="we", pady=5)
+        cookie_entry = ttk.Entry(cookie_frame, textvariable=self.var_cookie, font=self.font_label)
+        cookie_entry.pack(side="left", fill="x", expand=True)
+        cookie_scroll = ttk.Scrollbar(cookie_frame, orient="horizontal", command=cookie_entry.xview)
+        cookie_scroll.pack(side="bottom", fill="x")
+        cookie_entry.config(xscrollcommand=cookie_scroll.set)
 
         row += 1
         ttk.Label(frm_input, text="最大页数：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)

@@ -9,7 +9,7 @@
    serve ``static/index.html`` 界面；桌面版由 Electron 壳打开同一界面。
 """
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 __brand__ = "极客港"
 __brand_en__ = "jikegang"
 __brand_site__ = "jikegang.com"

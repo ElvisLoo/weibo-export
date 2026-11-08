@@ -80,6 +80,21 @@ class WeiboExporterGUI:
         except Exception:
             pass  # 图标加载失败不影响主功能
 
+    # ================= 页数调数 =================
+
+    def _get_cookie(self) -> str:
+        """从多行文本框读取 Cookie（去掉每行首尾空白后拼回单行）。"""
+        raw = self.cookie_text.get("1.0", "end-1c")
+        return "".join(line.strip() for line in raw.splitlines())
+
+    def _nudge_pages(self, delta: int):
+        """点击 −/＋ 按钮调整最大页数（最小 0，最大 9999）。"""
+        try:
+            cur = int(self.var_max_pages.get())
+        except Exception:
+            cur = 0
+        self.var_max_pages.set(max(0, min(9999, cur + delta)))
+
     # ================= UI 构建 =================
 
     def _build_ui(self):
@@ -98,6 +113,8 @@ class WeiboExporterGUI:
             style.configure("TCheckbutton", font=self.font_label)
             style.configure("TLabelframe.Label", font=self.font_label)
             style.configure("TEntry", font=self.font_label)
+            # 页数 −/＋ 大号按钮样式
+            style.configure("Big.TButton", font=("Microsoft YaHei UI", 15, "bold"), padding=2)
         except Exception:
             pass
 
@@ -105,34 +122,51 @@ class WeiboExporterGUI:
         frm_input = ttk.LabelFrame(self.root, text=" 1. 输入信息 ", padding=12)
         frm_input.pack(fill="x", padx=14, pady=(14, 8))
 
+        frm_input.columnconfigure(0, minsize=132)  # 标签列固定宽，短标签右对齐贴向冒号
+        frm_input.columnconfigure(2, weight=1)      # 输入框列自适应
+
+        # 列职责：0=标签(右对齐) 1=冒号(独立列,保证竖直对齐) 2=输入框 3=提示(紧贴)
         row = 0
-        ttk.Label(frm_input, text="微博用户 ID：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(frm_input, text="微博用户 ID", font=self.font_label).grid(
+            row=row, column=0, sticky="e", pady=5)
+        ttk.Label(frm_input, text="：", font=self.font_label).grid(
+            row=row, column=1, sticky="w", pady=5)
         self.var_uid = tk.StringVar()
-        ttk.Entry(frm_input, textvariable=self.var_uid, width=26, font=self.font_label).grid(row=row, column=1, sticky="w", pady=5)
-        ttk.Label(frm_input, text="(纯数字，如 123456789)", font=self.font_hint,
-                  foreground="gray").grid(row=row, column=2, sticky="w", pady=5, padx=(8, 0))
+        ttk.Entry(frm_input, textvariable=self.var_uid, width=22, font=self.font_label).grid(
+            row=row, column=2, sticky="w", pady=5)
+        ttk.Label(frm_input, text="（纯数字，如 123456789）", font=self.font_hint,
+                  foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
         row += 1
-        ttk.Label(frm_input, text="Cookie（可选）：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
-        self.var_cookie = tk.StringVar()
-        # Cookie 加宽并支持横向滚动（Cookie 通常很长，要看清大部分内容）
-        cookie_frame = ttk.Frame(frm_input)
-        cookie_frame.grid(row=row, column=1, columnspan=3, sticky="we", pady=5)
-        cookie_entry = ttk.Entry(cookie_frame, textvariable=self.var_cookie, font=self.font_label)
-        cookie_entry.pack(side="left", fill="x", expand=True)
-        cookie_scroll = ttk.Scrollbar(cookie_frame, orient="horizontal", command=cookie_entry.xview)
-        cookie_scroll.pack(side="bottom", fill="x")
-        cookie_entry.config(xscrollcommand=cookie_scroll.set)
+        ttk.Label(frm_input, text="Cookie（可选）", font=self.font_label).grid(
+            row=row, column=0, sticky="e", pady=5)
+        ttk.Label(frm_input, text="：", font=self.font_label).grid(
+            row=row, column=1, sticky="w", pady=5)
+        # Cookie 用多行文本框（4 行高，长 Cookie 直接铺开看，无需横向滚动箭头）
+        self.cookie_text = tk.Text(frm_input, height=4, wrap="none",
+                                   font=self.font_label, relief="solid", borderwidth=1)
+        self.cookie_text.grid(row=row, column=2, sticky="we", pady=5)
+        ttk.Label(frm_input, text="粘贴网页 Cookie", font=self.font_hint,
+                  foreground="gray").grid(row=row, column=3, sticky="n", pady=7, padx=(10, 0))
 
         row += 1
-        ttk.Label(frm_input, text="最大页数：", font=self.font_label).grid(row=row, column=0, sticky="w", pady=5)
+        ttk.Label(frm_input, text="最大页数", font=self.font_label).grid(
+            row=row, column=0, sticky="e", pady=5)
+        ttk.Label(frm_input, text="：", font=self.font_label).grid(
+            row=row, column=1, sticky="w", pady=5)
+        # 页数：输入框 + 大号 −/＋ 按钮（原生 Spinbox 箭头太小，换成可点的方按钮）
         self.var_max_pages = tk.IntVar(value=0)
-        ttk.Spinbox(frm_input, from_=0, to=9999, textvariable=self.var_max_pages,
-                    width=9, font=self.font_label).grid(row=row, column=1, sticky="w", pady=5)
-        ttk.Label(frm_input, text="0 = 抓到底", font=self.font_hint, foreground="gray").grid(
-            row=row, column=2, sticky="w", pady=5, padx=(8, 0))
-
-        frm_input.columnconfigure(1, weight=1)
+        pages_box = ttk.Frame(frm_input)
+        pages_box.grid(row=row, column=2, sticky="w", pady=5)
+        ttk.Entry(pages_box, textvariable=self.var_max_pages, width=8,
+                  font=self.font_label).pack(side="left")
+        # 大号 −/＋ 按钮（原生 Spinbox 箭头太小）
+        ttk.Button(pages_box, text="－", width=3, style="Big.TButton",
+                   command=lambda: self._nudge_pages(-1)).pack(side="left", padx=(6, 3))
+        ttk.Button(pages_box, text="＋", width=3, style="Big.TButton",
+                   command=lambda: self._nudge_pages(1)).pack(side="left", padx=3)
+        ttk.Label(frm_input, text="0 = 抓到底", font=self.font_hint,
+                  foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
         # --- 导出格式 ---
         frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=12)
@@ -162,7 +196,7 @@ class WeiboExporterGUI:
                   foreground="gray").pack(side="right")
 
         # --- 进度 ---
-        frm_progress = ttk.LabelFrame(self.root, text=" 3. 进度 ", padding=12)
+        frm_progress = ttk.LabelFrame(self.root, text=" 3. 任务进度 ", padding=12)
         frm_progress.pack(fill="both", expand=True, padx=14, pady=8)
 
         self.var_progress = tk.StringVar(value="就绪")
@@ -197,7 +231,7 @@ class WeiboExporterGUI:
         if not uid.isdigit():
             messagebox.showwarning("提示", "请输入纯数字微博用户 ID")
             return
-        cookie = self.var_cookie.get().strip()
+        cookie = self._get_cookie().strip()
         max_pages = self.var_max_pages.get()
 
         self.btn_crawl.config(state="disabled")

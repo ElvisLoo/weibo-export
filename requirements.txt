@@ -1,7 +1,13 @@
-# 极客港 · 微博导出工具 (jikegang-weibo-export) 后端依赖
+# 极客港 · 微博导出工具 (jikegang-weibo-export) 依赖
+
+# ===== 核心引擎依赖（桌面版 & 网页版都必需）=====
 # 安装：python -m pip install -r requirements.txt
+requests>=2.28
+jinja2>=3.1
+reportlab>=3.6
+
+# ===== 网页版 / 本地服务模式专用（桌面 tkinter 版不需要）=====
+# 仅当你运行 `python -m weibo_export.server` 启动本地网页服务时才需要。
+# 桌面版 v1.1.0 起改用 tkinter 原生 GUI，已不依赖以下两个包。
 fastapi>=0.110
 uvicorn[standard]>=0.27
-jinja2>=3.1
-requests>=2.28
-reportlab>=3.6

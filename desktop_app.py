@@ -122,32 +122,34 @@ class WeiboExporterGUI:
         frm_input = ttk.LabelFrame(self.root, text=" 1. 输入信息 ", padding=12)
         frm_input.pack(fill="x", padx=14, pady=(14, 8))
 
-        frm_input.columnconfigure(0, minsize=132)  # 标签列固定宽，短标签右对齐贴向冒号
+        frm_input.columnconfigure(0, minsize=92)   # 标签列固定宽，右对齐贴向冒号
         frm_input.columnconfigure(2, weight=1)      # 输入框列自适应
+        frm_input.columnconfigure(3, minsize=236)   # 提示列固定宽 → 三条提示词竖直对齐
 
-        # 列职责：0=标签(右对齐) 1=冒号(独立列,保证竖直对齐) 2=输入框 3=提示(紧贴)
+        # 列职责：0=标签(右对齐) 1=冒号(独立列,竖直对齐) 2=输入框 3=提示(固定列,三条对齐)
         row = 0
-        ttk.Label(frm_input, text="微博用户 ID", font=self.font_label).grid(
+        ttk.Label(frm_input, text="微博 ID", font=self.font_label).grid(
             row=row, column=0, sticky="e", pady=5)
         ttk.Label(frm_input, text="：", font=self.font_label).grid(
             row=row, column=1, sticky="w", pady=5)
         self.var_uid = tk.StringVar()
         ttk.Entry(frm_input, textvariable=self.var_uid, width=22, font=self.font_label).grid(
             row=row, column=2, sticky="w", pady=5)
-        ttk.Label(frm_input, text="（纯数字，如 123456789）", font=self.font_hint,
+        ttk.Label(frm_input, text="纯数字，如 123456789", font=self.font_hint,
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
         row += 1
-        ttk.Label(frm_input, text="Cookie（可选）", font=self.font_label).grid(
+        ttk.Label(frm_input, text="Cookie", font=self.font_label).grid(
             row=row, column=0, sticky="e", pady=5)
         ttk.Label(frm_input, text="：", font=self.font_label).grid(
             row=row, column=1, sticky="w", pady=5)
-        # Cookie 用多行文本框（4 行高，长 Cookie 直接铺开看，无需横向滚动箭头）
-        self.cookie_text = tk.Text(frm_input, height=4, wrap="none",
+        # Cookie 多行文本框（3 行高，长 Cookie 铺开看，无需横向滚动箭头）
+        self.cookie_text = tk.Text(frm_input, height=3, wrap="none",
                                    font=self.font_label, relief="solid", borderwidth=1)
         self.cookie_text.grid(row=row, column=2, sticky="we", pady=5)
-        ttk.Label(frm_input, text="粘贴网页 Cookie", font=self.font_hint,
-                  foreground="gray").grid(row=row, column=3, sticky="n", pady=7, padx=(10, 0))
+        ttk.Label(frm_input, text="（可选）粘贴网页 Cookie；不填仅抓公开博文", font=self.font_hint,
+                  foreground="gray", wraplength=222, justify="left").grid(
+            row=row, column=3, sticky="nw", pady=5, padx=(10, 0))
 
         row += 1
         ttk.Label(frm_input, text="最大页数", font=self.font_label).grid(
@@ -167,7 +169,6 @@ class WeiboExporterGUI:
                    command=lambda: self._nudge_pages(1)).pack(side="left", padx=3)
         ttk.Label(frm_input, text="0 = 抓到底", font=self.font_hint,
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
-
         # --- 导出格式 ---
         frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=12)
         frm_fmt.pack(fill="x", padx=14, pady=8)

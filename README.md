@@ -153,17 +153,94 @@ print(exporter.export_all(db.connect('weibo.db'),'1892838392','exports',['html',
 - **导出目录**：`当前用户/文档/微博导出`（图片下载在同目录 `media/` 子文件夹，**两者需放一起**才能离线看图）。
 - **应用图标说明**：图标中的新浪微博 logo 版权归**新浪公司**所有，本工具作为「微博备份」用途的标识使用，
   开源时请在 README 保留本声明；logo 不得用于暗示官方出品或任何商业用途。
-- 本项目代码**自行实现**，未复制任何第三方抓取项目源码（部分同类项目无许可证，商用需规避版权）。
+- **第三方依赖许可**：本项目使用的开源库及其许可见下方「六、开源许可与第三方组件」。
+
+---
+
+## 六、开源许可与第三方组件
+
+本项目代码以 **MIT License** 发布（见 `LICENSE`）。项目**自行实现**，未复制、未搬运任何第三方抓取项目的源码。
+
+### 使用的开源库（通过 pip 安装，非源码拷贝）
+
+| 依赖 | 用途 | 许可 |
+|---|---|---|
+| [FastAPI](https://github.com/tiangolo/fastapi) | 后端 API 框架（网页版/服务模式） | MIT |
+| [Uvicorn](https://github.com/encode/uvicorn) | ASGI 服务器 | BSD-3-Clause |
+| [Jinja2](https://github.com/pallets/jinja) | HTML 模板渲染 | BSD-3-Clause |
+| [Requests](https://github.com/psf/requests) | HTTP 抓取 | Apache-2.0 |
+| [ReportLab](https://www.reportlab.com/opensource/) | PDF 生成 | BSD-2-Clause |
+| [Tkinter](https://docs.python.org/3/library/tkinter.html) | 桌面版 GUI（Python 标准库） | Python Software Foundation License |
+
+> 上述库的许可均允许商用与再分发；完整许可文本随各库发行包一同分发。
+
+### 参考项目（仅学习设计思路，未复制代码）
+
+本项目在**功能设计**上参考了以下开源项目的思路，但**全部代码为独立实现**，未复制、未修改、未引入其源码或二进制文件：
+
+| 项目 | 许可 | 参考内容 |
+|---|---|---|
+| [YaoZeyuan/stablog](https://github.com/YaoZeyuan/stablog) | MIT | 微博备份工具的功能形态、HTML/PDF 双格式导出理念 |
+| [kyuumm/WeiboArchive](https://github.com/kyuumm/WeiboArchive) | MIT | 微博归档的数据组织思路 |
+| [addingtonbonnie2-web/weibo-archive-reader](https://github.com/addingtonbonnie2-web/weibo-archive-reader) | 其他（NOASSERTION） | 本地化归档浏览、隐私优先的设计理念 |
+
+> 说明：本项目与其中的抓取类项目无代码继承关系。部分同类抓取项目（如 `dataabc/weibo-crawler`）**无明确开源许可**，
+> 为规避版权风险，本项目**刻意不参考、不复制**其任何源码，抓取逻辑完全自行实现。
+
+### 致谢
+
+- 感谢 [YaoZeyuan](https://github.com/YaoZeyuan) 的 **stablog** 在微博备份领域做出的探索，其公开的文档与设计对本项目的功能规划有启发。
+- 感谢以上所有开源库作者的无私贡献。
+
+---
+
+## 七、常见问题
+
+<details>
+<summary><b>1. 为什么需要登录？</b></summary>
+
+只有登录后，才能获取账号下的全部微博内容（包括仅自己可见的部分）。从 GitHub Releases 下载的软件包可保证安全，源码完全开放，可自行编译验证。
+</details>
+
+<details>
+<summary><b>2. 为什么每条请求间隔 20 秒？</b></summary>
+
+新浪对爬虫限制严格，20s 是多次试验后验证的安全最短间隔。强行加速会导致账号被限制。
+</details>
+
+<details>
+<summary><b>3. 大批量微博怎么办？</b></summary>
+
+如账号有 10 万条微博（约需 180 小时），可参考高级功能分批导入，或多机分片备份后合并。
+</details>
+
+<details>
+<summary><b>4. 非 Win10 64 位系统支持吗？</b></summary>
+
+目前在 Win10 64 位、Win11 64 位系统测试通过。其他系统可提交 Issue 反馈。
+</details>
+
+---
+
+## 八、免责声明
+
+- ⚠️ **仅限个人备份**：本工具仅用于备份**你自己有权访问的**微博内容。
+- ❌ **不得商用**，不得用于批量采集他人数据、不得用于任何违反微博用户协议的用途。
+- 请遵守微博用户协议与 robots 约定，**控制抓取频率**（务必保留限速）。
+- 🔒 **Cookie 属敏感信息**（等同账号凭证）：仅保存在本机内存用于本次抓取，**不上传任何服务器**，
+  请勿泄露给他人。所有数据仅存本机 `weibo.db`，导出文件存于本机导出目录。
+- **应用图标说明**：图标中的新浪微博 logo 版权归**新浪公司**所有，本工具作为「微博备份」用途的标识使用，
+  开源时请在 README 保留本声明；logo 不得用于暗示官方出品或任何商业用途。
+- **第三方组件**：本项目使用的开源库许可清单见「六、开源许可与第三方组件」，均在对应许可允许范围内使用。
 
 ---
 
 ## 九、技术栈
 
-- 后端：**Python + FastAPI**（依赖更轻更稳），`requests` 抓取，`SQLite`(weibo.db) 存储，
+- 后端引擎：**Python**，`requests` 抓取，`SQLite`(weibo.db) 存储，
   `Jinja2` 生成 HTML，Markdown 纯文本拼接，PDF 用 `reportlab`（注册 Windows 中文字体）。
-- 前端：**单文件 HTML**（内联 CSS + 原生 JS），由后端 serve；桌面版与未来网页版共用。
-- 后端作为独立可运行模块：`python -m weibo_export.server`，监听 `127.0.0.1`。
-- 桌面端：Electron 壳（`electron/main.js`）拉起后端子进程并加载本地界面。
+- 桌面版：**Tkinter 原生 GUI**（Python 标准库，无 WebView2/浏览器依赖，Win10/11 开箱即用）。
+- 网页版（规划中）：复用同一套后端引擎 + FastAPI 本地服务 + 单文件 HTML 前端，未来部署到 `jikegang.com`。
 
 ---
 

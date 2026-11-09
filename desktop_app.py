@@ -26,6 +26,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
 
+from weibo_export.crawler import _parse_uid_input
+
 
 def _data_dir() -> str:
     """数据目录：文档/微博导出/"""
@@ -133,9 +135,12 @@ class WeiboExporterGUI:
         ttk.Label(frm_input, text="：", font=self.font_label).grid(
             row=row, column=1, sticky="w", pady=5)
         self.var_uid = tk.StringVar()
-        ttk.Entry(frm_input, textvariable=self.var_uid, width=22, font=self.font_label).grid(
-            row=row, column=2, sticky="w", pady=5)
-        ttk.Label(frm_input, text="纯数字，如：123456789", font=self.font_hint,
+        uid_entry = ttk.Entry(frm_input, textvariable=self.var_uid, width=22,
+                              font=self.font_label)
+        uid_entry.grid(row=row, column=2, sticky="w", pady=5)
+        # 支持直接粘贴微博主页链接，自动识别出数字 ID（小白友好）
+        uid_entry.bind("<KeyRelease>", self._try_resolve_uid)
+        ttk.Label(frm_input, text="纯数字或主页链接，如：123456789", font=self.font_hint,
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
         row += 1
@@ -240,12 +245,56 @@ class WeiboExporterGUI:
     def _set_progress(self, text: str):
         self.var_progress.set(text)
 
-    # ================= 抓取 =================
+    def _try_resolve_uid(self, event=None):
+        """输入框内容变化时，若看起来是微博主页链接，自动识别出数字 ID。"""
+        raw = self.var_uid.get().strip()
+        uid, needs_net = _parse_uid_input(raw)
+        if needs_net is None:
+            return  # 不是链接（纯数字或普通文本），不打扰
+        if uid:
+            # 本地直接识别到数字 ID，自动回填
+            if self.var_uid.get() != uid:
+                self.var_uid.set(uid)
+                self._log(f"已从链接识别微博 ID：{uid}")
+        else:
+            # weibo.com/自定义域名 需联网换 UID，后台解析（不阻塞输入框）
+            if not getattr(self, "_uid_resolving", False):
+                self._uid_resolving = True
+                self._set_progress("正在识别主页链接...")
+                threading.Thread(target=self._resolve_uid_async,
+                                 args=(raw,), daemon=True).start()
+
+    def _resolve_uid_async(self, url: str):
+        """后台把 weibo.com/自定义域名 解析成数字 UID。"""
+        from weibo_export.crawler import build_crawler
+
+        uid, log_msg, ok = "", "", False
+        try:
+            crawler = build_crawler(kind="weibo", cookie=self._get_cookie(),
+                                    progress=None, stop_flag=lambda: False)
+            info = crawler.get_user_for_url(url)
+            uid = (info or {}).get("user_id", "")
+            if uid and uid.isdigit():
+                ok = True
+            else:
+                log_msg = "该主页链接未识别到数字 ID，请改填纯数字 ID"
+        except Exception as e:
+            log_msg = f"识别主页链接失败：{e}"
+
+        def apply():
+            self._uid_resolving = False
+            if ok:
+                self.var_uid.set(uid)
+                self._log(f"已从主页链接识别微博 ID：{uid}")
+                self._set_progress("就绪")
+            else:
+                self._log(log_msg or "无法识别该主页链接，请确认链接正确或改填纯数字 ID")
+                self._set_progress("识别失败，请检查链接或改填纯数字 ID")
+        self.root.after(0, apply)
 
     def _start_crawl(self):
-        uid = self.var_uid.get().strip()
-        if not uid.isdigit():
-            messagebox.showwarning("提示", "请输入纯数字微博用户 ID")
+        uid = self._resolve_uid_from_input()
+        if not uid:
             return
         cookie = self._get_cookie().strip()
         max_pages = self.var_max_pages.get()
@@ -338,10 +387,44 @@ class WeiboExporterGUI:
 
     # ================= 导出 =================
 
+    def _resolve_uid_from_input(self) -> Optional[str]:
+        """从输入框解析出纯数字 ID（支持直接粘贴主页链接）。
+
+        返回数字 ID；无法识别时弹提示并返回 None。
+        """
+        raw = self.var_uid.get().strip()
+        if raw.isdigit():
+            return raw
+        uid, needs_net = _parse_uid_input(raw)
+        if needs_net is None:
+            messagebox.showwarning(
+                "提示", "请输入纯数字微博用户 ID\n或粘贴微博主页链接（支持 weibo.com/u/…、m.weibo.cn/u/…）")
+            return None
+        if needs_net is False and uid:
+            self.var_uid.set(uid)
+            return uid
+        # 自定义域名需联网换 UID（用户已明确点按钮，主线程同步解析可接受）
+        from weibo_export.crawler import build_crawler
+        self._set_progress("正在识别主页链接...")
+        try:
+            crawler = build_crawler(kind="weibo", cookie=self._get_cookie(),
+                                    progress=None, stop_flag=lambda: False)
+            info = crawler.get_user_for_url(raw)
+            uid = (info or {}).get("user_id", "")
+        except Exception as e:
+            messagebox.showwarning("提示", f"识别主页链接失败：\n{e}\n\n请改填纯数字 ID")
+            return None
+        if not (uid and uid.isdigit()):
+            messagebox.showwarning(
+                "提示", f"无法识别该主页链接：\n{raw}\n\n请确认链接正确或改填纯数字 ID")
+            return None
+        self.var_uid.set(uid)
+        self._log(f"已从主页链接识别微博 ID：{uid}")
+        return uid
+
     def _start_export(self):
-        uid = self.var_uid.get().strip()
-        if not uid.isdigit():
-            messagebox.showwarning("提示", "请先输入微博用户 ID")
+        uid = self._resolve_uid_from_input()
+        if not uid:
             return
         fmts = [f for f, v in self.fmt_vars.items() if v.get()]
         if not fmts:

@@ -31,6 +31,60 @@ BASE_URL = "https://m.weibo.cn"
 
 ProgressCb = Optional[Callable[[Dict[str, Any]], None]]
 
+# 主页链接里直接带数字 ID 的形式（本地即可识别，无需联网）
+_UID_URL_PATTERNS = [
+    re.compile(r"weibo\.com/u/(\d+)"),
+    re.compile(r"m\.weibo\.cn/u/(\d+)"),
+    re.compile(r"m\.weibo\.cn/profile/(\d+)"),
+    re.compile(r"weibo\.com/profile\.php\?.*?uid=(\d+)"),
+]
+# weibo.com/<自定义域名> 形式（需联网请求换数字 UID）
+_CUSTOM_DOMAIN_RE = re.compile(r"weibo\.com/([A-Za-z0-9_\-]+)", re.I)
+_URL_RE = re.compile(r"^https?://", re.I)
+
+
+def _extract_uid_from_url(url: str) -> Optional[str]:
+    """从微博主页链接里提取数字 UID。
+
+    返回：
+        数字 ID 字符串（本地识别或自定义域名）；
+        无法识别时返回 None。
+    """
+    if not url:
+        return None
+    url = url.strip()
+    if not url.startswith("http"):
+        url = "https://" + url  # 允许省略协议头
+    for pat in _UID_URL_PATTERNS:
+        m = pat.search(url)
+        if m:
+            return m.group(1)
+    # weibo.com/自定义域名 → 由调用方联网解析
+    m = _CUSTOM_DOMAIN_RE.search(url)
+    if m:
+        name = m.group(1)
+        # 排除已知的非用户路径（如 weibo.com/u 本身、api 等）
+        if name.lower() not in {"u", "profile", "api", "login", "signup", "home"}:
+            return m.group(1)
+    return None
+
+
+def _parse_uid_input(raw: str):
+    """解析用户输入框内容，供 UI 使用。
+
+    返回 (uid, needs_net)：
+        - 非链接（纯数字或普通文本）：(None, None) → UI 不处理
+        - 链接且本地可识别到数字 ID：(数字ID, False) → UI 直接回填
+        - 链接但需联网换 UID（weibo.com/自定义域名）：(None, True) → UI 后台解析
+    """
+    raw = (raw or "").strip()
+    if not _URL_RE.search(raw):
+        return (None, None)
+    uid = _extract_uid_from_url(raw)
+    if uid and uid.isdigit():
+        return (uid, False)
+    return (None, True)
+
 
 @dataclass
 class CrawlResult:
@@ -190,6 +244,21 @@ class WeiboCrawler(BaseCrawler):
         })
         if self.cookie:
             self.session.headers["Cookie"] = self.cookie
+
+    def get_user_for_url(self, url: str) -> Dict[str, Any]:
+        """把微博主页链接解析成用户信息（供 UI 从链接自动识别 ID）。
+
+        支持链接：
+            https://weibo.com/u/1234567890
+            https://weibo.com/abcdefg      （自定义域名，需请求换 UID）
+            https://m.weibo.cn/profile/1234567890
+            https://m.weibo.cn/u/1234567890
+        返回 {'user_id': '...', 'screen_name': '...'}；失败抛 CrawlerError。
+        """
+        uid = _extract_uid_from_url(url)
+        if uid is None:
+            raise CrawlerError(f"无法识别的微博链接：{url}")
+        return self.get_user(uid)
 
     def _get_with_retry(self, url: str, max_retries: int = 3) -> Any:
         """带指数退避 + 随机抖动的请求，抗瞬时网络错误与限流。

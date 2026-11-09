@@ -24,6 +24,8 @@ a = Analysis(
     hiddenimports=[
         # 只保留核心引擎依赖（tkinter 由 PyInstaller 自动检测）
         'reportlab',
+        # v1.2.0：可选增强——内置浏览器一键登录取 Cookie（无 WebView2 时自动降级为手动粘贴）
+        'webview',
     ],
     hookspath=[],
     runtime_hooks=[],
@@ -34,8 +36,8 @@ a = Analysis(
         'IPython', 'notebook', 'jupyter',
         'pytest', 'setuptools', 'pip', 'wheel',
         'scrapy',
-        # v1.1.0 起不再依赖
-        'uvicorn', 'fastapi', 'webview', 'pydantic',
+        # v1.1.0 起不再依赖（保留 webview 作为 v1.2.0 可选增强）
+        'uvicorn', 'fastapi', 'pydantic',
         'starlette', 'anyio', 'h11',
     ],
     noarchive=False,

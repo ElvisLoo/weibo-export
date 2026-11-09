@@ -144,17 +144,25 @@ class WeiboExporterGUI:
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
         row += 1
+        # 标签 + 一键登录取 Cookie（可选增强：有 WebView2 时可在软件内登录自动取 Cookie）
         ttk.Label(frm_input, text="Cookie", font=self.font_label).grid(
             row=row, column=0, sticky="e", pady=5)
         ttk.Label(frm_input, text="：", font=self.font_label).grid(
             row=row, column=1, sticky="w", pady=5)
+        btn_holder = ttk.Frame(frm_input)
+        btn_holder.grid(row=row, column=2, sticky="w", pady=5)
+        self.btn_login = ttk.Button(btn_holder, text="登录取Cookie",
+                                    command=self._start_browser_login)
+        self.btn_login.pack(side="left")
+        ttk.Label(btn_holder, text="  ↓ 登录后自动填入", font=self.font_hint,
+                  foreground="gray").pack(side="left")
         # Cookie 多行文本框（3 行高，长 Cookie 铺开看，无需横向滚动箭头）
         self.cookie_text = tk.Text(frm_input, height=3, wrap="none",
                                    font=self.font_label, relief="solid", borderwidth=1)
-        self.cookie_text.grid(row=row, column=2, sticky="we", pady=5)
+        self.cookie_text.grid(row=row + 1, column=2, sticky="we", pady=5)
         ttk.Label(frm_input, text="粘贴网页 Cookie\n不填仅抓公开博文", font=self.font_hint,
                   foreground="gray", justify="left").grid(
-            row=row, column=3, sticky="nw", pady=5, padx=(10, 0))
+            row=row + 1, column=3, sticky="nw", pady=5, padx=(10, 0))
 
         row += 1
         ttk.Label(frm_input, text="最大页数", font=self.font_label).grid(
@@ -291,6 +299,38 @@ class WeiboExporterGUI:
                 self._log(log_msg or "无法识别该主页链接，请确认链接正确或改填纯数字 ID")
                 self._set_progress("识别失败，请检查链接或改填纯数字 ID")
         self.root.after(0, apply)
+
+    # ---------- 一键登录取 Cookie（可选增强，Option A） ----------
+
+    def _start_browser_login(self):
+        """打开内置浏览器登录微博，登录后自动把 Cookie 填入 Cookie 栏。
+
+        依赖 pywebview + WebView2 运行时；不可用时给出手动粘贴的引导。
+        """
+        from weibo_export import browser_login
+
+        def on_success(cookie_header: str):
+            self.cookie_text.delete("1.0", "end")
+            self.cookie_text.insert("1.0", cookie_header)
+            self._log(f"✅ 已自动获取登录 Cookie（{len(cookie_header)} 字符），可直接抓取")
+            self._set_progress("已自动获取 Cookie，就绪")
+
+        def on_error(reason: str):
+            self._log(f"⚠ {reason}")
+            self._set_progress("自动登录不可用，可手动粘贴 Cookie")
+            messagebox.showinfo("无法自动登录", reason)
+
+        if not browser_login.is_available():
+            on_error(
+                "当前系统未安装 WebView2 运行时，无法打开内置浏览器。\n\n"
+                "【自动登录】需要安装 Microsoft Edge WebView2 运行时（一次性安装）。\n"
+                "【手动方式】在浏览器登录微博后，按 F12 → 网络/Network → 刷新 → "
+                "找任一请求 → 复制 Cookie 请求头粘贴到上面 Cookie 栏。")
+            return
+
+        self._set_progress("正在打开登录窗口，请在窗口内登录微博...")
+        self._log("正在打开微博登录窗口，请在弹出窗口内完成登录...")
+        browser_login.launch_login(self.root, on_success, on_error)
 
     def _start_crawl(self):
         uid = self._resolve_uid_from_input()

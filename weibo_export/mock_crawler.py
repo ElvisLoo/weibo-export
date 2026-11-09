@@ -26,6 +26,20 @@ _SAMPLE_TEXTS: List[str] = [
     "把过去的微博翻了一遍，青涩又真诚。导出备份这件事，越早做越好——数据在自己手里才安心。",
 ]
 
+# 一条长博文全文（用于验证长博文补全后的导出效果，比列表截断版长得多）
+_LONG_POST_FULL = (
+    "【三年创业复盘：我踩过的 10 个坑】\n\n"
+    "2023 年裸辞创业到现在，整整三年。今天把踩过的坑系统梳理一遍，希望对准备起步的朋友有帮助。\n\n"
+    "坑 1：一开始就想做大而全的产品。第一版规划了 20 个功能，做了半年还没上线。"
+    "后来砍到 3 个核心功能，两周就跑通了 MVP。教训：先做能用的，再做完美的。\n\n"
+    "坑 2：沉迷技术选型，忽视了用户需求。纠结用什么框架纠结了一个月，其实用户根本不关心技术栈，"
+    "他们只关心你的工具能不能解决他的问题。\n\n"
+    "坑 3：不敢收费。前半年免费送了一堆账号，以为攒够用户再变现，结果免费来的用户根本不珍惜，"
+    "付费用户反而反馈更积极。定价本身就是筛选。\n\n"
+    "坑 4-10 略，写在评论区。总之，创业三年最大的收获不是赚了多少钱，而是终于理解了："
+    "产品是为用户服务的，不是为自己炫技服务的。数据在自己手里，才安心。#创业复盘# #极客港#"
+)
+
 
 class MockCrawler(BaseCrawler):
     name = "mock"
@@ -57,7 +71,13 @@ class MockCrawler(BaseCrawler):
         for i in range(self.per_page):
             idx = (page - 1) * self.per_page + i
             created = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(base_ts - i * 3600))
-            text = _SAMPLE_TEXTS[idx % len(_SAMPLE_TEXTS)]
+            # 每页第一条用长博文全文，验证导出能拿到完整正文（而非截断版）
+            if i == 0:
+                text = _LONG_POST_FULL
+                is_long = True
+            else:
+                text = _SAMPLE_TEXTS[idx % len(_SAMPLE_TEXTS)]
+                is_long = False
             mblog_id = f"mock_{user_id}_{page}_{i}"
             posts.append({
                 "mblog_id": mblog_id,
@@ -71,7 +91,7 @@ class MockCrawler(BaseCrawler):
                 "source": "iPhone 15 Pro" if i % 2 == 0 else "微博网页版",
                 "region_name": "发布于 北京" if i % 3 == 0 else "",
                 "pic_urls": [] if i % 2 else [f"https://example.com/pic/{mblog_id}.jpg"],
-                "raw": {"id": mblog_id, "page": page, "index": idx},
+                "raw": {"id": mblog_id, "page": page, "index": idx, "isLong": is_long},
             })
         return {"posts": posts, "ok": 1}
 

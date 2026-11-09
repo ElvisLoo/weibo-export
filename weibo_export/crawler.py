@@ -73,6 +73,26 @@ class BaseCrawler:
     def get_user(self, user_id: str) -> Dict[str, Any]:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def _fetch_longtext(self, mblog_id: str) -> Optional[str]:
+        """抓取长博文全文（微博列表接口会把超长正文截断，需调 longText 接口补全）。
+
+        成功返回纯文本全文；任何失败（无网/解析失败/无全文）返回 None，
+        由调用方回退到截断版正文，绝不因单篇长博文拖垮整页抓取。
+        """
+        url = f"{BASE_URL}/statuses/longtext?id={mblog_id}"
+        try:
+            # 补全全文是"锦上添花"，失败立即回退即可，不重试
+            # （否则一页多条长博文持续失败时，25 秒重试会严重拖慢整页抓取）
+            r = self._get_with_retry(url, max_retries=0)
+            data = r.json()
+        except Exception:
+            return None
+        try:
+            long_data = (data.get("data") or {}).get("longTextContent", "")
+            return long_data or None
+        except Exception:
+            return None
+
     def fetch_page(self, user_id: str, page: int) -> Dict[str, Any]:  # pragma: no cover
         raise NotImplementedError
 
@@ -226,6 +246,26 @@ class WeiboCrawler(BaseCrawler):
             "followers_count": info.get("followers_count", 0),
         }
 
+    def _fetch_longtext(self, mblog_id: str) -> Optional[str]:
+        """抓取长博文全文（微博列表接口会把超长正文截断，需调 longText 接口补全）。
+
+        成功返回纯文本全文；任何失败（无网/解析失败/无全文）返回 None，
+        由调用方回退到截断版正文，绝不因单篇长博文拖垮整页抓取。
+        """
+        url = f"{BASE_URL}/statuses/longtext?id={mblog_id}"
+        try:
+            # 补全全文是"锦上添花"，失败立即回退即可，不重试
+            # （否则一页多条长博文持续失败时，25 秒重试会严重拖慢整页抓取）
+            r = self._get_with_retry(url, max_retries=0)
+            data = r.json()
+        except Exception:
+            return None
+        try:
+            long_data = (data.get("data") or {}).get("longTextContent", "")
+            return long_data or None
+        except Exception:
+            return None
+
     def fetch_page(self, user_id: str, page: int) -> Dict[str, Any]:
         url = (f"{BASE_URL}/api/container/getIndex?containerid="
                f"107603{user_id}&page_type=01&page={page}")
@@ -245,12 +285,25 @@ class WeiboCrawler(BaseCrawler):
             pics = []
             for p in mb.get("pics", []) or []:
                 pics.append(p.get("large", {}).get("url") or p.get("url", ""))
+            mblog_id = str(mb.get("id") or mb.get("mid"))
+            text = mb.get("text", "")
+            text_raw = mb.get("text_raw") or _strip_html(text)
+
+            # 长博文全文补全：列表接口会把超长正文截断，需再调 longText 接口
+            is_long = mb.get("isLong", False) or "全文" in _strip_html(text)[-20:]
+            if is_long:
+                full_text = self._fetch_longtext(mblog_id)
+                if full_text:
+                    text_raw = full_text
+                    self._emit({"type": "longtext_fetched", "mblog_id": mblog_id,
+                                "len": len(full_text)})
+
             posts.append({
-                "mblog_id": str(mb.get("id") or mb.get("mid")),
+                "mblog_id": mblog_id,
                 "user_id": user_id,
                 "created_at": _parse_time(mb.get("created_at")),
-                "text": mb.get("text", ""),
-                "text_raw": mb.get("text_raw") or _strip_html(mb.get("text", "")),
+                "text": text,
+                "text_raw": text_raw,
                 "reposts_count": mb.get("reposts_count", 0),
                 "comments_count": mb.get("comments_count", 0),
                 "attitudes_count": mb.get("attitudes_count", 0),

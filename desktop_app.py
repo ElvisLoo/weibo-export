@@ -321,6 +321,11 @@ class WeiboExporterGUI:
                 f"等待 {state.get('wait', '?')} 秒（{state.get('error', '')}）")
             self._set_progress(
                 f"网络波动，第 {state.get('attempt', '?')} 次重试中...")
+        elif t == "longtext_fetched":
+            # 长博文全文补全成功
+            self._log(
+                f"📄 已补全长博文全文（{state.get('mblog_id', '')}，"
+                f"{state.get('len', 0)} 字）")
 
     def _ui_idle(self):
         try:

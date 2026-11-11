@@ -129,6 +129,7 @@ class WeiboExporterGUI:
         frm_input.columnconfigure(3, minsize=236)   # 提示列固定宽 → 三条提示词竖直对齐
 
         # 列职责：0=标签(右对齐) 1=冒号(独立列,竖直对齐) 2=输入框 3=提示(固定列,三条对齐)
+        # 行职责（每行独占，互不冲突）：0=微博ID 1=Cookie按钮 2=Cookie文本框 3=最大页数
         row = 0
         ttk.Label(frm_input, text="微博 ID", font=self.font_label).grid(
             row=row, column=0, sticky="e", pady=5)
@@ -143,28 +144,28 @@ class WeiboExporterGUI:
         ttk.Label(frm_input, text="纯数字或主页链接，如：123456789", font=self.font_hint,
                   foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
 
-        row += 1
-        # 标签 + 一键登录取 Cookie（可选增强：有 WebView2 时可在软件内登录自动取 Cookie）
+        row += 1  # row=1：Cookie 标签 + 一键登录取Cookie 按钮（独占一行）
         ttk.Label(frm_input, text="Cookie", font=self.font_label).grid(
             row=row, column=0, sticky="e", pady=5)
         ttk.Label(frm_input, text="：", font=self.font_label).grid(
             row=row, column=1, sticky="w", pady=5)
         btn_holder = ttk.Frame(frm_input)
-        btn_holder.grid(row=row, column=2, sticky="w", pady=5)
+        btn_holder.grid(row=row, column=2, columnspan=2, sticky="w", pady=5)
         self.btn_login = ttk.Button(btn_holder, text="登录取Cookie",
                                     command=self._start_browser_login)
         self.btn_login.pack(side="left")
-        ttk.Label(btn_holder, text="  ↓ 登录后自动填入", font=self.font_hint,
-                  foreground="gray").pack(side="left")
-        # Cookie 多行文本框（3 行高，长 Cookie 铺开看，无需横向滚动箭头）
+        ttk.Label(btn_holder, text="  点此在软件内登录，自动填入下方 Cookie",
+                  font=self.font_hint, foreground="gray").pack(side="left")
+
+        row += 1  # row=2：Cookie 多行文本框（独占一行，避免与最大页数冲突）
         self.cookie_text = tk.Text(frm_input, height=3, wrap="none",
                                    font=self.font_label, relief="solid", borderwidth=1)
-        self.cookie_text.grid(row=row + 1, column=2, sticky="we", pady=5)
-        ttk.Label(frm_input, text="粘贴网页 Cookie\n不填仅抓公开博文", font=self.font_hint,
+        self.cookie_text.grid(row=row, column=2, sticky="we", pady=5)
+        ttk.Label(frm_input, text="也可粘贴网页 Cookie\n不填仅抓公开博文", font=self.font_hint,
                   foreground="gray", justify="left").grid(
-            row=row + 1, column=3, sticky="nw", pady=5, padx=(10, 0))
+            row=row, column=3, sticky="nw", pady=5, padx=(10, 0))
 
-        row += 1
+        row += 1  # row=3：最大页数（独占一行）
         ttk.Label(frm_input, text="最大页数", font=self.font_label).grid(
             row=row, column=0, sticky="e", pady=5)
         ttk.Label(frm_input, text="：", font=self.font_label).grid(

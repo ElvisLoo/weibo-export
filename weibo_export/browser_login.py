@@ -128,31 +128,45 @@ def launch_login(parent_root,
         win_ref = {}
 
         def opener():
-            win = webview.create_window(
-                "微博登录（登录成功后自动获取 Cookie）",
-                WEIBO_LOGIN_URL,
-                width=430,
-                height=740,
-            )
-            win_ref["w"] = win
-            win.events.loaded += on_loaded
+            try:
+                win = webview.create_window(
+                    "微博登录（登录成功后自动获取 Cookie）",
+                    WEIBO_LOGIN_URL,
+                    width=430,
+                    height=740,
+                )
+                win_ref["w"] = win
+                win.events.loaded += on_loaded
 
-            def watcher():
-                # Safety: if the user closes the window without logging in,
-                # notify the app once the GUI loop exits.
-                time.sleep(0.3)
-                if not state["captured"]:
-                    # Loop exits when window closes; wait then report if nothing captured.
-                    while win.events and not _window_closed(win):
-                        time.sleep(0.5)
+                def watcher():
+                    # Safety: if the user closes the window without logging in,
+                    # notify the app once the GUI loop exits.
+                    time.sleep(0.3)
                     if not state["captured"]:
-                        parent_root.after(0, on_error,
-                                          "已关闭登录窗口，未捕获到登录 Cookie。\n"
-                                          "请重新点击登录，完成登录后再关闭窗口。")
+                        # Loop exits when window closes; wait then report if nothing captured.
+                        while win.events and not _window_closed(win):
+                            time.sleep(0.5)
+                        if not state["captured"]:
+                            parent_root.after(0, on_error,
+                                              "已关闭登录窗口，未捕获到登录 Cookie。\n"
+                                              "请重新点击登录，完成登录后再关闭窗口。")
 
-            threading.Thread(target=watcher, daemon=True).start()
-            webview.start(private_mode=False,
-                          storage_path=_storage_path())
+                threading.Thread(target=watcher, daemon=True).start()
+                webview.start(private_mode=False, storage_path=_storage_path())
+            except Exception as e:
+                # WebView2 运行时缺失、引擎初始化失败等，统一回传错误信息
+                err_msg = str(e)
+                if "WebView2" in err_msg or "CoreWebView2" in err_msg or "edge" in err_msg.lower():
+                    err_msg = (
+                        "WebView2 运行时不可用，无法打开内置浏览器。\n\n"
+                        "【自动登录】需要安装 Microsoft Edge WebView2 运行时（一次性安装）。\n"
+                        "  下载地址：https://developer.microsoft.com/en-us/microsoft-edge/webview2/\n\n"
+                        "【手动方式】在浏览器登录微博后，按 F12 → 网络/Network → 刷新 → "
+                        "找任一请求 → 复制 Cookie 请求头粘贴到 Cookie 栏。"
+                    )
+                else:
+                    err_msg = f"登录窗口启动失败：{err_msg}\n\n请改用手动粘贴 Cookie。"
+                parent_root.after(0, on_error, err_msg)
 
         threading.Thread(target=opener, daemon=True).start()
 

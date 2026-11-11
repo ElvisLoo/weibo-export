@@ -99,9 +99,17 @@ def _result_dir() -> str:
 # =====================================================================
 
 def _login_child(url: str, result_path: str) -> None:
-    """Run inside the spawned process. Opens the login browser and, once a
-    logged-in session is detected, writes the Cookie header to ``result_path``
-    and exits. Exits with code 1 if the engine cannot start."""
+    """Run inside the spawned process. Opens the login browser; the user logs
+    in and then clicks an injected "已登录？点此获取 Cookie" button (via the
+    js_api bridge) which captures the full cookie header — including HttpOnly
+    SUB/SUBP that document.cookie cannot see — and writes it to result_path.
+
+    Why a manual button rather than auto-detection: m.weibo.cn's login signal
+    is not stable across page versions/redirects, and the essential SUB/SUBP
+    cookies are HttpOnly (invisible to document.cookie). Previous auto-probe
+    attempts never fired reliably in the field. A single explicit click avoids
+    guessing and runs get_cookies() on pywebview's own thread, where it is
+    safe."""
     import webview
 
     window_state = {"captured": False}
@@ -114,45 +122,6 @@ def _login_child(url: str, result_path: str) -> None:
         except Exception:
             pass
 
-    class _Bridge:
-        """js_api bridge. Its methods run on pywebview's own dispatch thread —
-        NOT the UI message loop — so calling win.get_cookies() here is safe
-        (it self-Invokes onto the UI thread and blocks until the result)."""
-
-        def capture(self, win=None):
-            try:
-                target = win or _win_ref.get("w")
-                cookies = target.get_cookies()
-                header = _cookie_header(cookies)
-                if not header:
-                    _diag("js_api.capture: cookie store 为空")
-                    return
-                window_state["captured"] = True
-                _diag(f"js_api.capture 成功，长度 {len(header)}")
-                try:
-                    target.destroy()
-                except Exception:
-                    pass
-                _write_result(header)
-            except Exception as e:
-                _diag(f"js_api.capture 失败: {e!r}")
-
-    bridge = _Bridge()
-    _win_ref = {}
-
-    def _js_login_probe():
-        """Return the JS expression that reports whether a logged-in session
-        exists. m.weibo.cn sets $render_data[0].login to true only after
-        authentication. We also check MLOGIN cookie as backup (it becomes
-        non-zero after login and is not HttpOnly so visible to JS)."""
-        return (
-            "(function(){try{"
-            "if(window.$render_data&&$render_data[0]&&$render_data[0].login===true)return true;"
-            "var m=document.cookie.match(/(?:^|;\\s*)MLOGIN=(\\d+)/);"
-            "if(m&&m[1]&&m[1]!=='0')return true;"
-            "return false;}catch(e){return false}})()"
-        )
-
     def _write_result(header):
         try:
             with open(result_path, "w", encoding="utf-8") as f:
@@ -161,70 +130,106 @@ def _login_child(url: str, result_path: str) -> None:
         except Exception as e:
             _diag(f"写出结果失败: {e!r}")
 
-    def on_loaded(win):
-        # Loaded events fire on pywebview's dispatch thread; a direct
-        # get_cookies() is safe here. Try an early capture in case the session
-        # is already logged in from a prior run (persistent storage).
-        try:
-            cookies = win.get_cookies()
-            if cookies and (_login_keys_found(cookies)):
+    class _Bridge:
+        """js_api bridge. Its methods run on pywebview's own dispatch thread —
+        NOT the UI message loop — so calling win.get_cookies() here is safe."""
+
+        def capture(self):
+            try:
+                target = _win_ref.get("w")
+                cookies = target.get_cookies()
                 header = _cookie_header(cookies)
+                _diag(f"用户点击，get_cookies 返回 {len(cookies) if cookies else 0} 条，header {len(header)} 字符")
+                if not header:
+                    window_state["msg"] = "未读取到 Cookie，请确认已在窗口内登录后再点。"
+                    _diag("capture: cookie store 为空")
+                    return window_state["msg"]
                 window_state["captured"] = True
-                _diag(f"on_loaded 首次捕获（已登录态），长度 {len(header)}")
-                _write_result(header)
                 try:
-                    win.destroy()
+                    target.destroy()
                 except Exception:
                     pass
-                return
-        except Exception as e:
-            _diag(f"on_loaded get_cookies 失败: {e!r}")
-
-    def poller():
-        # Independent background thread: starts right after create_window, so
-        # it runs whether or not on_shown/on_loaded fire. Polls with a cheap
-        # thread-safe evaluate_js probe; on login it delegates the actual
-        # get_cookies() to the js_api bridge (never calls it from here, which
-        # would deadlock against the UI message loop).
-        _diag("登录轮询线程已启动（JS 探测）")
-        n = 0
-        while not window_state["captured"]:
-            n += 1
-            try:
-                if webview_loop_done.is_set():
-                    _diag("webview 循环结束，停止轮询")
-                    return
-                w = _win_ref.get("w")
-                if w is None:
-                    time.sleep(0.5)
-                    continue
-                logged_in = w.evaluate_js(_js_login_probe())
-                if logged_in:
-                    _diag(f"第 {n} 轮检测到登录态，触发 js_api 抓取")
-                    bridge.capture(w)
-                    return
+                _write_result(header)
+                return "ok"
             except Exception as e:
-                _diag(f"轮询探测异常: {e!r}")
+                _diag(f"capture 失败: {e!r}")
+                return f"读取 Cookie 失败：{e}"
+
+    bridge = _Bridge()
+    _win_ref = {}
+
+    # A persistent floating button injected into every page. Clicking it calls
+    # pywebview.api.capture(). Styled to stay visible at the bottom on both the
+    # login page and the logged-in feed.
+    INJECT_JS = r"""
+(function(){
+  if (window.__wbCookieBtn) return;
+  function add(){
+    if (document.getElementById('wbCookieBtn')) return;
+    var b = document.createElement('button');
+    b.id = 'wbCookieBtn';
+    b.textContent = '✅ 已登录？点此获取 Cookie';
+    b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;'
+      + 'width:100%;padding:16px;font-size:18px;font-weight:bold;'
+      + 'background:#e6162d;color:#fff;border:0;border-radius:0;'
+      + 'box-shadow:0 -2px 8px rgba(0,0,0,.25);cursor:pointer;';
+    b.onclick = function(){
+      b.textContent = '正在获取 Cookie…';
+      window.pywebview.api.capture().then(function(res){
+        if (res !== 'ok') { b.textContent = res; b.disabled = false; }
+      }).catch(function(e){ b.textContent = '获取失败：' + e; });
+    };
+    document.body.appendChild(b);
+    window.__wbCookieBtn = true;
+  }
+  add();
+  new MutationObserver(add).observe(document.documentElement, {childList:true, subtree:true});
+})()
+"""
+
+    def on_loaded(win):
+        try:
+            win.evaluate_js(INJECT_JS)
+            _diag("已注入获取 Cookie 按钮")
+        except Exception as e:
+            _diag(f"注入按钮失败: {e!r}")
+
+    def inject_worker():
+        # Belt-and-suspenders: on_loaded may not fire in every environment.
+        # Keep trying to inject the button until it succeeds, so the user is
+        # always able to click it. Stops once the loop ends or Cookie captured.
+        injected = False
+        while not injected and not window_state.get("captured"):
+            if webview_loop_done.is_set():
+                return
+            w = _win_ref.get("w")
+            if w is not None:
+                try:
+                    w.evaluate_js(INJECT_JS)
+                    injected = True
+                    _diag("注入按钮成功（兜底线程）")
+                    return
+                except Exception:
+                    pass
             time.sleep(1.0)
-        _diag(f"轮询结束（已捕获，共 {n} 轮）")
 
     webview_loop_done = threading.Event()
 
     win = webview.create_window(
-        "微博登录（登录成功后自动获取 Cookie，登录完可关闭本窗口）",
+        "微博登录（登录后点底部红色按钮获取 Cookie）",
         url,
-        width=430,
-        height=760,
+        width=460,
+        height=800,
         js_api=bridge,
     )
     _win_ref["w"] = win
     win.events.loaded += on_loaded
-    threading.Thread(target=poller, daemon=True).start()
+    threading.Thread(target=inject_worker, daemon=True).start()
     _diag(f"打开登录窗口 {url}")
     webview.start(private_mode=False, storage_path=_storage_path())
     webview_loop_done.set()
-    # Loop ended; if user closed without login, nothing to do (parent infers
-    # failure from process exit without a result file).
+    # Loop ended. If the user never clicked (no result file), the parent infers
+    # a failure and tells them to click the red button before closing.
 
 
 def _window_closed(win) -> bool:

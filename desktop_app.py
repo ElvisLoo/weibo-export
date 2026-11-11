@@ -518,6 +518,14 @@ class WeiboExporterGUI:
 
 
 def main() -> None:
+    # 登录浏览器子进程分支：打包后的 exe 用 --weibo-login-worker <结果文件>
+    # 被再次调用时，走独立进程跑 pywebview（必须占子进程自己的主线程），
+    # 不再与 tkinter 主循环抢主线程（这是 v1.2.1 "pywebview must be run on a
+    # main thread" 崩溃的根因）。
+    if "--weibo-login-worker" in sys.argv:
+        from weibo_export.browser_login import _child_main_from_args
+        sys.exit(_child_main_from_args(sys.argv[sys.argv.index("--weibo-login-worker") + 1:]))
+
     root = tk.Tk()
     app = WeiboExporterGUI(root)
     root.mainloop()

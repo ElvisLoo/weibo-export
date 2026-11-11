@@ -212,10 +212,14 @@ def _spawn_login_process(result_path: str) -> object:
 
 
 def _child_main_from_args(argv: list) -> int:
-    """Entry point used when the frozen exe is re-invoked as the login worker."""
-    if len(argv) < 2:
+    """Entry point used when the frozen exe is re-invoked as the login worker.
+
+    ``argv`` is the slice starting right after ``--weibo-login-worker``, so
+    ``argv[0]`` is the result-file path the child should write the Cookie to.
+    """
+    if len(argv) < 1:
         return 1
-    result_path = argv[1]
+    result_path = argv[0]
     try:
         _login_child(WEIBO_LOGIN_URL, result_path)
     except Exception:

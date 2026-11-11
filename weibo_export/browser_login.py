@@ -352,8 +352,9 @@ def _cleanup(result_path: str, proc) -> None:
             proc.terminate()
     except Exception:
         pass
-    try:
-        if os.path.exists(result_path):
-            os.remove(result_path)
-    except Exception:
-        pass
+    for path in (result_path, result_path + ".diag.txt"):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass

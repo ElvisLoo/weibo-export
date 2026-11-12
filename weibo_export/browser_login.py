@@ -131,22 +131,26 @@ def _login_child(url: str, result_path: str) -> None:
             _diag(f"写出结果失败: {e!r}")
 
     class _Bridge:
-        """js_api bridge. Its methods run on pywebview's own dispatch thread —
-        NOT the UI message loop — so calling win.get_cookies() here is safe."""
+        """js_api bridge. Its methods run on pywebview's own dispatch thread.
+
+        pywebview's get_cookies() is broken on WebView2: it queries cookies
+        only for the window's *current* URL domain, but login hops across
+        domains and SUB/SUBP are set on .weibo.cn while the window may sit on
+        another host. We instead reach the native CoreWebView2.CookieManager
+        and query *every relevant weibo domain*, marshalling each GetCookies
+        call onto the UI thread via webview.Invoke (CoreWebView2 is UI-thread
+        only). No blocking-with-semaphore from a non-UI thread → no deadlock,
+        and we capture the full set including HttpOnly SUB/SUBP."""
 
         def capture(self):
             try:
-                target = _win_ref.get("w")
-                cookies = target.get_cookies()
-                header = _cookie_header(cookies)
-                _diag(f"用户点击，get_cookies 返回 {len(cookies) if cookies else 0} 条，header {len(header)} 字符")
+                header = _native_capture()
+                _diag(f"原生多域抓取 header {len(header)} 字符")
                 if not header:
-                    window_state["msg"] = "未读取到 Cookie，请确认已在窗口内登录后再点。"
-                    _diag("capture: cookie store 为空")
-                    return window_state["msg"]
+                    return "未读取到 Cookie，请确认已在窗口内登录后再点。"
                 window_state["captured"] = True
                 try:
-                    target.destroy()
+                    _win_ref.get("w").destroy()
                 except Exception:
                     pass
                 _write_result(header)
@@ -154,6 +158,78 @@ def _login_child(url: str, result_path: str) -> None:
             except Exception as e:
                 _diag(f"capture 失败: {e!r}")
                 return f"读取 Cookie 失败：{e}"
+
+    def _native_capture() -> str:
+        """Query the WebView2 cookie store across all weibo domains and return
+        a combined 'k=v; k2=v2' header. Must be called from a pywebview
+        dispatch thread (js_api method), because it uses webview.Invoke to
+        marshal onto the UI thread.
+
+        Implementation note — we use the Chrome DevTools Protocol (CDP) call
+        ``Network.getCookies`` via CoreWebView2.CallDevToolsProtocolMethodAsync
+        rather than the native CookieManager. The CookieManager returns a
+        managed CoreWebView2Cookie LIST that pythonnet cannot marshal (the
+        ICoreWebView2Cookie COM→.NET cast raises NotImplementedException on
+        every WebView2 SDK we tested, including the latest). CDP returns a
+        plain JSON string instead — no COM casting involved — so we parse it
+        with stdlib json and get every cookie (including HttpOnly SUB/SUBP)
+        across all domains in ONE call."""
+        import clr
+        import json as _json
+        from System import Action, String
+        from System.Threading.Tasks import Task
+
+        win = _win_ref.get("w")
+        native = getattr(win, "native", None)
+        webview_ctl = getattr(native, "webview", None) if native else None
+        if webview_ctl is None:
+            _diag("原生抓取: 找不到 webview 控件")
+            return ""
+
+        collected = {"json": "", "err": ""}
+        done = threading.Event()
+
+        def ui_work():
+            try:
+                core = webview_ctl.CoreWebView2
+                if core is None:
+                    _diag("原生抓取: CoreWebView2 为空")
+                    done.set()
+                    return
+
+                def cb(task):
+                    try:
+                        collected["json"] = str(task.Result)
+                        _diag(f"CDP 返回 JSON，长度 {len(collected['json'])}")
+                    except Exception as e:
+                        collected["err"] = repr(e)
+                        _diag(f"CDP 回调异常: {e!r}")
+                    done.set()
+
+                # No URL filter ("{}") → returns cookies for all domains the
+                # engine has touched (weibo.cn, weibo.com, passport, …).
+                core.CallDevToolsProtocolMethodAsync(
+                    "Network.getCookies", "{}"
+                ).ContinueWith(Action[Task[String]](cb))
+            except Exception as e:
+                _diag(f"原生抓取 UI 工作异常: {e!r}")
+                done.set()
+
+        webview_ctl.Invoke(Action(ui_work))
+        if not done.wait(timeout=10):
+            _diag("原生抓取超时（10s）")
+
+        pairs = []
+        try:
+            data = _json.loads(collected["json"]) if collected["json"] else {}
+            for c in data.get("cookies", []):
+                n, v = c.get("name", ""), c.get("value", "")
+                if n:
+                    pairs.append(f"{n}={v}")
+        except Exception as e:
+            _diag(f"解析 CDP JSON 失败: {e!r}")
+        _diag(f"CDP 抓取到 {len(pairs)} 条 cookie")
+        return "; ".join(pairs)
 
     bridge = _Bridge()
     _win_ref = {}
@@ -194,6 +270,66 @@ def _login_child(url: str, result_path: str) -> None:
         except Exception as e:
             _diag(f"注入按钮失败: {e!r}")
 
+        # 自动检测：延迟探测登录 cookie（SUB/SUBP）。weibo 登录成功后会跳转
+        # 并种下 HttpOnly 的 SUB/SUBP cookie。我们在后台每隔几秒用 CDP 探测
+        # 一次（CDP 取 cookie 不依赖 COM cast，比 CookieManager 可靠），一旦
+        # 发现 SUB 或 SUBP 就自动抓取并写结果——用户无需知道要点底部按钮。
+        def auto_probe():
+            import json as _aj
+            for attempt in range(60):  # 最多探测 ~2 分钟
+                if window_state.get("captured"):
+                    return
+                if webview_loop_done.is_set():
+                    return
+                time.sleep(2.0)
+                try:
+                    w = _win_ref.get("w")
+                    if w is None:
+                        continue
+                    native = getattr(w, "native", None)
+                    wc = getattr(native, "webview", None) if native else None
+                    if wc is None:
+                        continue
+                    box = {"json": "", "err": "", "done": False}
+
+                    def ui():
+                        try:
+                            core = wc.CoreWebView2
+                            if core is None:
+                                box["done"] = True
+                                return
+                            def cb(task):
+                                try:
+                                    box["json"] = str(task.Result)
+                                except Exception as e:
+                                    box["err"] = repr(e)
+                                box["done"] = True
+                            core.CallDevToolsProtocolMethodAsync(
+                                "Network.getCookies", "{}"
+                            ).ContinueWith(_Action[_Task[_String]](cb))
+                        except Exception:
+                            box["done"] = True
+
+                    wc.Invoke(Action(ui))
+                    for _ in range(20):
+                        if box["done"]:
+                            break
+                        time.sleep(0.2)
+                    if not box["json"]:
+                        continue
+                    data = _aj.loads(box["json"])
+                    names = {c.get("name", "") for c in data.get("cookies", [])}
+                    _diag(f"自动探测第{attempt+1}次: cookie 名={names}")
+                    if "SUB" in names or "SUBP" in names:
+                        _diag("✅ 自动检测到登录 Cookie（SUB/SUBP），自动抓取")
+                        result = bridge.capture()
+                        _diag(f"自动抓取结果: {result}")
+                        return
+                except Exception as e:
+                    _diag(f"自动探测异常: {e!r}")
+
+        threading.Thread(target=auto_probe, daemon=True).start()
+
     def inject_worker():
         # Belt-and-suspenders: on_loaded may not fire in every environment.
         # Keep trying to inject the button until it succeeds, so the user is
@@ -214,6 +350,9 @@ def _login_child(url: str, result_path: str) -> None:
             time.sleep(1.0)
 
     webview_loop_done = threading.Event()
+    import clr as _clr  # noqa: F401  确保 System 类型在 on_loaded 闭包里可用
+    from System import Action as _Action, String as _String  # noqa: F401
+    from System.Threading.Tasks import Task as _Task  # noqa: F401
 
     win = webview.create_window(
         "微博登录（登录后点底部红色按钮获取 Cookie）",
@@ -223,7 +362,9 @@ def _login_child(url: str, result_path: str) -> None:
         js_api=bridge,
     )
     _win_ref["w"] = win
-    win.events.loaded += on_loaded
+    def _loaded_handler(*_a):
+        on_loaded(win)
+    win.events.loaded += _loaded_handler
     threading.Thread(target=inject_worker, daemon=True).start()
     _diag(f"打开登录窗口 {url}")
     webview.start(private_mode=False, storage_path=_storage_path())

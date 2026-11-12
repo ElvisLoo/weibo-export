@@ -153,6 +153,8 @@ class BaseCrawler:
     def run(self, conn, user_id: str, max_pages: int = 0,
             resume: bool = True, mode: str = "user") -> CrawlResult:
         """主循环：抓取 → 入库 → 断点续传 → 进度回调。"""
+        # 抓取前先做 Session 预热（有 cookie 时），提升首次请求成功率
+        self._warmup_session()
         user_id = str(user_id).strip()
         user = self.get_user(user_id)
         db.upsert_user(conn, user)
@@ -295,6 +297,44 @@ class WeiboCrawler(BaseCrawler):
                     raise CrawlerError("用户请求停止")
                 time.sleep(backoff)
         raise CrawlerError(f"多次重试仍失败：{last_err}")
+
+    def _warmup_session(self) -> None:
+        """抓取前预热 Session（仅在有 Cookie 时）。
+
+        只带核心 Cookie（尤其 SUB）请求一次 m.weibo.cn 首页，让服务器
+        下发适配的其它指纹（_T_WM、XSRF-TOKEN 等）。这是参考 weibo-crawler
+        的公开做法（仅学习思路、自行实现）：微博在登录后往往只需 SUB 一个
+        核心字段，其余反爬指纹可由服务器在预热时补齐，从而提升后续接口
+        抓取的成功率、降低被限流(418)概率。
+
+        设计原则：预热失败绝不阻断抓取——它只是"锦上添花"。网络不通或
+        超时都静默跳过，由后续正式抓取流程自己重试。响应里若 Set-Cookie
+        了新指纹，requests.Session 会自动合并进 cookie jar，但因为我们把
+        Cookie 放在 header 里，这里需手动把新指纹并回 Cookie header。
+        """
+        if not self.cookie:
+            return
+        try:
+            r = self.session.get(BASE_URL, timeout=10)
+            # 把服务器下发的新 cookie 合并进 Cookie header（保留原有字段）
+            new = r.cookies.get_dict() if r.cookies else {}
+            if new:
+                existing = {}
+                for pair in self.cookie.split(";"):
+                    if "=" in pair:
+                        k, v = pair.split("=", 1)
+                        existing[k.strip()] = v.strip()
+                existing.update(new)  # 服务器新指纹覆盖旧值
+                merged = "; ".join(f"{k}={v}" for k, v in existing.items())
+                self.cookie = merged
+                self.session.headers["Cookie"] = merged
+                self._emit({"type": "info", "message":
+                            f"会话预热完成，已更新 {len(new)} 项会话指纹"})
+            else:
+                self._emit({"type": "info", "message": "会话预热完成"})
+        except Exception:
+            # 预热失败不阻断：交给正式抓取流程按需重试
+            self._emit({"type": "info", "message": "会话预热跳过（网络未就绪）"})
 
     def get_user(self, user_id: str) -> Dict[str, Any]:
         url = f"{BASE_URL}/api/container/getIndex?containerid=100505{user_id}"

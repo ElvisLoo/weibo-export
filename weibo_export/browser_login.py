@@ -124,8 +124,18 @@ def _login_child(url: str, result_path: str) -> None:
 
     def _write_result(header):
         try:
-            with open(result_path, "w", encoding="utf-8") as f:
+            # 原子写：先写同目录临时文件，再 os.replace 原子重命名。
+            # 避免父进程轮询到「已创建但还没写完」的半截文件（open("w")
+            # 会先创建空文件），从而读到空/截断的 Cookie。
+            tmp = result_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 f.write(header)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp, result_path)
             _diag(f"已写出 Cookie 结果（{len(header)} 字符）")
         except Exception as e:
             _diag(f"写出结果失败: {e!r}")
@@ -310,7 +320,7 @@ def _login_child(url: str, result_path: str) -> None:
                         except Exception:
                             box["done"] = True
 
-                    wc.Invoke(Action(ui))
+                    wc.Invoke(_Action(ui))
                     for _ in range(20):
                         if box["done"]:
                             break

@@ -364,8 +364,10 @@ class WeiboExporterGUI:
             # 触发 UI 更新（从后台线程安全调用）
             self.root.after(0, lambda: self._update_progress_ui())
 
+        db_path = os.path.join(_data_dir(), "weibo.db")
+        conn = None
+        crawler = None
         try:
-            db_path = os.path.join(_data_dir(), "weibo.db")
             conn = db.connect(db_path)
 
             crawler = crawler_mod.build_crawler(
@@ -376,7 +378,6 @@ class WeiboExporterGUI:
                 stop_flag=lambda: self.stop_flag.is_set(),
             )
             result = crawler.run(conn, uid, max_pages=max_pages, resume=True)
-            conn.close()
 
             self.root.after(0, lambda: self._log(
                 f"抓取完成：入库 {result.total_posts} 条，{result.pages_fetched} 页"
@@ -389,6 +390,17 @@ class WeiboExporterGUI:
             self.root.after(0, lambda: self._set_progress(f"抓取出错：{e}"))
             _write_log(f"抓取异常：{traceback.format_exc()}")
         finally:
+            # 无论成功/异常都释放连接与底层 socket 连接池，避免长会话累积句柄
+            if crawler is not None:
+                try:
+                    crawler.session.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             self.root.after(0, lambda: self._ui_idle())
 
     def _update_progress_ui(self):
@@ -485,8 +497,9 @@ class WeiboExporterGUI:
     def _export_worker(self, uid: str, fmts: list):
         from weibo_export import db, exporter
 
+        db_path = os.path.join(_data_dir(), "weibo.db")
+        conn = None
         try:
-            db_path = os.path.join(_data_dir(), "weibo.db")
             conn = db.connect(db_path)
             if db.count_posts(conn, uid) == 0:
                 self.root.after(0, lambda: messagebox.showinfo(
@@ -494,7 +507,6 @@ class WeiboExporterGUI:
                 return
             out_dir = _data_dir()
             results = exporter.export_all(conn, uid, out_dir, fmts)
-            conn.close()
             files = [f"{r['format']}: {os.path.basename(r['path'])} ({r['size']} B)"
                      for r in results]
             self.root.after(0, lambda: self._log("导出完成：\n  " + "\n  ".join(files)))
@@ -507,6 +519,12 @@ class WeiboExporterGUI:
             self.root.after(0, lambda: self._set_progress(f"导出出错：{e}"))
             _write_log(f"导出异常：{traceback.format_exc()}")
         finally:
+            # 无数据提前 return / 异常路径都释放连接，避免 SQLite 句柄泄漏
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             self.root.after(0, lambda: self._ui_idle())
 
     # ================= 停止 =================

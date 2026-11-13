@@ -147,6 +147,9 @@ class BaseCrawler:
         except Exception:
             return None
 
+    def _warmup_session(self) -> None:
+        """Session 预热（no-op 基类默认；WeiboCrawler 覆写实际逻辑）。"""
+
     def fetch_page(self, user_id: str, page: int) -> Dict[str, Any]:  # pragma: no cover
         raise NotImplementedError
 
@@ -355,31 +358,19 @@ class WeiboCrawler(BaseCrawler):
             "followers_count": info.get("followers_count", 0),
         }
 
-    def _fetch_longtext(self, mblog_id: str) -> Optional[str]:
-        """抓取长博文全文（微博列表接口会把超长正文截断，需调 longText 接口补全）。
-
-        成功返回纯文本全文；任何失败（无网/解析失败/无全文）返回 None，
-        由调用方回退到截断版正文，绝不因单篇长博文拖垮整页抓取。
-        """
-        url = f"{BASE_URL}/statuses/longtext?id={mblog_id}"
-        try:
-            # 补全全文是"锦上添花"，失败立即回退即可，不重试
-            # （否则一页多条长博文持续失败时，25 秒重试会严重拖慢整页抓取）
-            r = self._get_with_retry(url, max_retries=0)
-            data = r.json()
-        except Exception:
-            return None
-        try:
-            long_data = (data.get("data") or {}).get("longTextContent", "")
-            return long_data or None
-        except Exception:
-            return None
-
     def fetch_page(self, user_id: str, page: int) -> Dict[str, Any]:
         url = (f"{BASE_URL}/api/container/getIndex?containerid="
                f"107603{user_id}&page_type=01&page={page}")
-        r = self._get_with_retry(url)
-        data = r.json()
+        try:
+            r = self._get_with_retry(url)
+            data = r.json()
+        except CrawlerError:
+            raise  # 重试耗尽/用户停止：向上抛，让主循环记录
+        except Exception as e:
+            # 新浪偶发返回空 body/HTML → r.json() 抛错。不中断整次抓取，
+            # 返回空结果交由主循环的 empty_streak 判到底逻辑处理。
+            self._emit({"type": "info", "message": f"第 {page} 页返回非 JSON，跳过（{type(e).__name__}）"})
+            return {"posts": [], "ok": 0}
         cards = (data.get("data") or {}).get("cards", []) or []
         posts: List[Dict[str, Any]] = []
         for card in cards:
@@ -391,12 +382,16 @@ class WeiboCrawler(BaseCrawler):
                         break
             if not mb:
                 continue
+            raw_id = mb.get("id") or mb.get("mid")
+            if raw_id is None:
+                # 既无 id 也无 mid 的脏数据：跳过，避免 str(None)="None" 互相覆盖主键静默丢数据
+                continue
+            mblog_id = str(raw_id)
+            text = mb.get("text", "")
+            text_raw = mb.get("text_raw") or _strip_html(text)
             pics = []
             for p in mb.get("pics", []) or []:
                 pics.append(p.get("large", {}).get("url") or p.get("url", ""))
-            mblog_id = str(mb.get("id") or mb.get("mid"))
-            text = mb.get("text", "")
-            text_raw = mb.get("text_raw") or _strip_html(text)
 
             # 长博文全文补全：列表接口会把超长正文截断，需再调 longText 接口
             is_long = mb.get("isLong", False) or "全文" in _strip_html(text)[-20:]

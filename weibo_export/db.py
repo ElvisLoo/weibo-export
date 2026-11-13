@@ -187,14 +187,15 @@ def count_posts(conn: sqlite3.Connection, user_id: str) -> int:
 # ---------- 抓取任务（断点续传） ----------
 
 def create_task(conn: sqlite3.Connection, user_id: str, mode: str, total_pages: int = 0) -> int:
-    cur = conn.execute(
-        """INSERT INTO tasks(user_id, mode, status, max_page, total_pages, post_count,
-                             created_at, updated_at)
-           VALUES(?,?,?,?,?,?,?,?)""",
-        (str(user_id), mode, "running", 0, int(total_pages or 0), 0, time.time(), time.time()),
-    )
-    conn.commit()
-    return int(cur.lastrowid)
+    with _WRITE_LOCK:
+        cur = conn.execute(
+            """INSERT INTO tasks(user_id, mode, status, max_page, total_pages, post_count,
+                                 created_at, updated_at)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (str(user_id), mode, "running", 0, int(total_pages or 0), 0, time.time(), time.time()),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
 
 def update_task(conn: sqlite3.Connection, task_id: int, **fields: Any) -> None:

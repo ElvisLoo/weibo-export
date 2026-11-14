@@ -167,7 +167,7 @@ class BaseCrawler:
         if resume and prev and prev.get("status") == "running" and prev.get("max_page"):
             start_page = int(prev["max_page"]) + 1
 
-        total_pages = max_pages if max_pages else int(user.get("statuses_count", 0) or 0)
+        total_pages = max_pages if max_pages else _parse_count_cn(user.get("statuses_count", 0))
         task_id = db.create_task(conn, user_id, self.name, total_pages)
 
         pages_fetched = 0
@@ -209,6 +209,39 @@ class BaseCrawler:
         self._emit({"type": "done", "user_id": user_id, "reason": reason})
         return CrawlResult(user=user, task_id=task_id, total_posts=db.count_posts(conn, user_id),
                            pages_fetched=pages_fetched, stopped_reason=reason)
+
+
+def _parse_count_cn(value: Any) -> int:
+    """把微博接口返回的计数解析成整数（失败返回 0，不抛异常）。
+
+    微博 m 站接口对微博总数（statuses_count）等字段，会按量级返回不同格式：
+        123            -> 123            （纯数字）
+        "123"          -> 123            （数字字符串）
+        "256.4万"      -> 2564000        （中文字符串，大 V 常见）
+        "1.2亿"        -> 120000000      （超大号）
+        None / 脏数据   -> 0              （解析失败，回退为抓全部）
+
+    直接用 int() 会在遇到 "256.4万" 这类字符串时抛 ValueError 崩溃，
+    这正是抓半藏森林等大 V 微博时报错的根因。
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if not isinstance(value, str):
+        return 0
+    s = value.strip()
+    if not s:
+        return 0
+    try:
+        # 中文数量级后缀：万=1e4、亿=1e8
+        if "亿" in s:
+            return int(float(s.replace("亿", "").strip()) * 1e8)
+        if "万" in s:
+            return int(float(s.replace("万", "").strip()) * 1e4)
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
 
 
 def _parse_time(ts: Any) -> str:

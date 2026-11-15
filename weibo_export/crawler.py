@@ -442,8 +442,14 @@ class WeiboCrawler(BaseCrawler):
             for p in mb.get("pics", []) or []:
                 pics.append(p.get("large", {}).get("url") or p.get("url", ""))
 
-            # 长博文全文补全：列表接口会把超长正文截断，需再调 longText 接口
-            is_long = mb.get("isLong", False) or "全文" in _strip_html(text)[-20:]
+            # 长博文全文补全：列表接口会把超长正文截断，需再调 longText 接口。
+            # 微博接口的真实字段是 isLongText（不是 isLong），还可能用 text 末尾
+            # 带「全文」链接来标识；两种都查，避免漏抓长文全文。
+            is_long = (
+                mb.get("isLongText", False)
+                or mb.get("isLong", False)
+                or "全文" in _strip_html(text)[-20:]
+            )
             if is_long:
                 full_text = self._fetch_longtext(mblog_id)
                 if full_text:

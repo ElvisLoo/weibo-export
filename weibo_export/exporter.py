@@ -246,23 +246,28 @@ def export(conn, user_id: str, out_dir: str, fmt: str) -> Dict[str, Any]:
     posts = db.get_posts(conn, user_id)
     os.makedirs(out_dir, exist_ok=True)
     screen_name = user.get("screen_name") or f"user_{user_id}"
-    base = f"weibo_{_safe_filename(screen_name)}_{user_id}"
+    # 文件名不带 weibo_ 前缀，直接用「昵称_ID」，与用户文件夹同名，便于归档
+    base = f"{_safe_filename(screen_name)}_{user_id}"
 
-    # 下载图片到本地 media/<用户文件夹>/，实现离线备份（绕开新浪防盗链）。
-    # 每个用户单独一个子文件夹，避免多用户图片混杂无法分辨。
-    # 各格式共用同一份本地图片，已缓存的不会重复下载。
+    # 每个用户一个独立文件夹：<out_dir>/<昵称_ID>/，所有格式文件放里面，
+    # 图片放该文件夹内的 media/。结构清晰、便于按用户归档。
+    #   D:\微博导出\测试用户_123456789\测试用户_123456789.html
+    #   D:\微博导出\测试用户_123456789\media\...
     user_folder = _safe_filename(f"{screen_name}_{user_id}")
-    media_dir = os.path.join(out_dir, _MEDIA_DIR_NAME, user_folder)
+    user_dir = os.path.join(out_dir, user_folder)
+    os.makedirs(user_dir, exist_ok=True)
+    media_dir = os.path.join(user_dir, _MEDIA_DIR_NAME)  # 用户文件夹内
     url_map: Dict[str, str] = {}
     if fmt in ("html", "md", "txt"):
+        # 相对路径相对「文件所在目录 user_dir」，故为 media/xxx
         url_map = _download_media(_collect_all_pic_urls(posts), media_dir,
-                                  user_rel=_MEDIA_DIR_NAME + "/" + user_folder)
+                                  user_rel=_MEDIA_DIR_NAME)
 
     dispatch = {
         "html": _export_html, "md": _export_md, "pdf": _export_pdf,
         "json": _export_json, "txt": _export_txt,
     }
-    path = dispatch[fmt](posts, user, os.path.join(out_dir, f"{base}.{fmt}"),
+    path = dispatch[fmt](posts, user, os.path.join(user_dir, f"{base}.{fmt}"),
                          url_map=url_map)
     return {"format": fmt, "path": path, "count": len(posts),
             "size": os.path.getsize(path) if os.path.exists(path) else 0,

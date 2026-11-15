@@ -42,9 +42,11 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # 排除本项目用不到的巨型依赖，显著减小产物体积、加快打包
+        # 注意：tkinter 是本 GUI 的核心（desktop_app.py 用 tk/ttk/ScrolledText），
+        # 绝不能排除！PyQt 等才是真正用不到的。
         'scipy', 'matplotlib', 'pandas', 'numpy',
         'PyQt5', 'PySide2', 'PyQt6', 'PySide6',
-        'tkinter', 'IPython', 'notebook', 'jupyter',
+        'IPython', 'notebook', 'jupyter',
         'pytest', 'setuptools', 'pip', 'wheel',
         'scrapy',
     ],

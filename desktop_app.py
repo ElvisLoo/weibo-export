@@ -61,9 +61,10 @@ class WeiboExporterGUI:
     def __init__(self, root: tk.Tk):
         from weibo_export import __version__
         self.root = root
+        # 窗口几何（尺寸/位置/居中/自适应屏幕）统一在 main() 里设置，
+        # 避免这里硬编码覆盖掉 main() 的自适应逻辑。
         root.title(f"极客港 · 微博导出工具 v{__version__}")
-        root.geometry("920x800")
-        root.minsize(800, 680)
+        root.minsize(800, 600)
         # 窗口图标（打包后从 _MEIPASS 加载，源码运行从 assets/ 加载）
         self._set_window_icon(root)
 
@@ -115,6 +116,32 @@ class WeiboExporterGUI:
         return os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "assets", "app.ico")
 
+    def _make_logo_photo(self, icon_path: str):
+        """把 app.ico 转成 64px logo（供品牌区展示）。
+
+        根因：图标本身是"橙色圆角方块"，但圆角以外的四个角在原图里就是**实心黑**
+        （像素实测：从角到 (8,8) 一带 alpha=255 的纯黑），不是透明。所以单纯改
+        透明度、加透明蒙版都治不了——黑角是被"画出来"的，不是"没抠掉"。
+
+        正确做法（即用户最初指出的）：把圆角矩形以外的区域**填成窗口背景色**，
+        让四角与浅灰窗口融为一体，彻底看不到黑角。用不透明的 RGB 图避免
+        ImageTk 的 alpha 合成再引入暗边。
+        """
+        from PIL import Image, ImageDraw, ImageTk
+        img = Image.open(icon_path)
+        img.load()
+        img.size = (256, 256)  # 取最大帧
+        # logo 48px：品牌区紧凑些，把纵向空间让给底部进度区（日志框）
+        logo = img.convert("RGBA").resize((40, 40), Image.LANCZOS)
+        # 窗口背景色（与 tk 默认浅灰一致）。圆角半径按像素实测：橙色方块铺满整图、
+        # 对角线第一个橙像素在 k=11(256) → R≈37.6px(256)=9.4px(64)→7px(48)，取 7。
+        bg = (240, 240, 240)
+        canvas = Image.new("RGBA", (40, 40), bg + (255,))
+        mask = Image.new("L", (40, 40), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, 39, 39], radius=6, fill=255)
+        canvas.paste(logo, (0, 0), mask)   # 只取圆角内的图标像素，角外留背景色
+        return ImageTk.PhotoImage(canvas.convert("RGB"))
+
     def _build_brand(self, parent):
         """顶部品牌区：大 logo 图标 + 标题 + 副标题。
 
@@ -127,20 +154,16 @@ class WeiboExporterGUI:
         try:
             icon = self._icon_path()
             if os.path.exists(icon):
-                from PIL import Image, ImageTk
-                img = Image.open(icon)
-                img.load()
-                img.size = (256, 256)  # 取最大帧
-                logo = img.convert("RGBA").resize((64, 64), Image.LANCZOS)
-                self._logo_photo = ImageTk.PhotoImage(logo)  # 保引用防 GC
-                tk.Label(frm, image=self._logo_photo).pack(side="left", padx=(0, 12))
+                self._logo_photo = self._make_logo_photo(icon)  # 保引用防 GC
+                if self._logo_photo is not None:
+                    tk.Label(frm, image=self._logo_photo).pack(side="left", padx=(0, 12))
         except Exception as e:
             _write_log(f"加载品牌 logo 失败：{e}")
         # 右侧标题 + 副标题
         txt = ttk.Frame(frm)
         txt.pack(side="left", fill="y")
         ttk.Label(txt, text="极客港 · 微博导出工具",
-                  font=("Microsoft YaHei UI", 22, "bold")).pack(anchor="w")
+                  font=("Microsoft YaHei UI", 18, "bold")).pack(anchor="w")
         from weibo_export import __version__
         ttk.Label(txt, text=f"本地运行 · 数据不出电脑 · v{__version__}",
                   font=("Microsoft YaHei UI", 11),
@@ -156,7 +179,8 @@ class WeiboExporterGUI:
         self.font_progress = ("Microsoft YaHei UI", 14, "bold")
 
         # --- 顶部品牌区：大 logo + 标题（让左上角标识醒目）---
-        frm_brand = ttk.Frame(self.root, padding=(18, 14, 18, 6))
+        # 压缩 padding，把纵向空间让给底部进度区（进度区空间不足会被挤扁）
+        frm_brand = ttk.Frame(self.root, padding=(18, 8, 18, 2))
         frm_brand.pack(fill="x")
         self._build_brand(frm_brand)
 
@@ -174,7 +198,7 @@ class WeiboExporterGUI:
 
         # --- 输入区 ---
         frm_input = ttk.LabelFrame(self.root, text=" 1. 输入信息 ", padding=12)
-        frm_input.pack(fill="x", padx=14, pady=(14, 8))
+        frm_input.pack(fill="x", padx=14, pady=(6, 3))
 
         frm_input.columnconfigure(0, minsize=92)   # 标签列固定宽，右对齐贴向冒号
         frm_input.columnconfigure(2, weight=1)      # 输入框列自适应
@@ -190,11 +214,11 @@ class WeiboExporterGUI:
         self.var_uid = tk.StringVar()
         uid_entry = ttk.Entry(frm_input, textvariable=self.var_uid, width=22,
                               font=self.font_label)
-        uid_entry.grid(row=row, column=2, sticky="w", pady=5)
+        uid_entry.grid(row=row, column=2, sticky="w", pady=3)
         # 支持直接粘贴微博主页链接，自动识别出数字 ID（小白友好）
         uid_entry.bind("<KeyRelease>", self._try_resolve_uid)
         ttk.Label(frm_input, text="纯数字或主页链接，如：123456789", font=self.font_hint,
-                  foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
+                  foreground="gray").grid(row=row, column=3, sticky="w", pady=3, padx=(10, 0))
 
         row += 1  # row=1：Cookie 标签 + 一键登录取Cookie 按钮（独占一行）
         ttk.Label(frm_input, text="Cookie", font=self.font_label).grid(
@@ -202,7 +226,7 @@ class WeiboExporterGUI:
         ttk.Label(frm_input, text="：", font=self.font_label).grid(
             row=row, column=1, sticky="w", pady=5)
         btn_holder = ttk.Frame(frm_input)
-        btn_holder.grid(row=row, column=2, columnspan=2, sticky="w", pady=5)
+        btn_holder.grid(row=row, column=2, columnspan=2, sticky="w", pady=3)
         self.btn_login = ttk.Button(btn_holder, text="登录取Cookie",
                                     command=self._start_browser_login)
         self.btn_login.pack(side="left")
@@ -210,9 +234,9 @@ class WeiboExporterGUI:
                   font=self.font_hint, foreground="gray").pack(side="left")
 
         row += 1  # row=2：Cookie 多行文本框（独占一行，避免与最大页数冲突）
-        self.cookie_text = tk.Text(frm_input, height=3, wrap="none",
+        self.cookie_text = tk.Text(frm_input, height=1, wrap="none",
                                    font=self.font_label, relief="solid", borderwidth=1)
-        self.cookie_text.grid(row=row, column=2, sticky="we", pady=5)
+        self.cookie_text.grid(row=row, column=2, sticky="we", pady=3)
         ttk.Label(frm_input, text="也可粘贴网页 Cookie\n不填仅抓公开博文", font=self.font_hint,
                   foreground="gray", justify="left").grid(
             row=row, column=3, sticky="nw", pady=5, padx=(10, 0))
@@ -225,7 +249,7 @@ class WeiboExporterGUI:
         # 页数：输入框 + 大号 −/＋ 按钮（原生 Spinbox 箭头太小，换成可点的方按钮）
         self.var_max_pages = tk.IntVar(value=0)
         pages_box = ttk.Frame(frm_input)
-        pages_box.grid(row=row, column=2, sticky="w", pady=5)
+        pages_box.grid(row=row, column=2, sticky="w", pady=3)
         ttk.Entry(pages_box, textvariable=self.var_max_pages, width=8,
                   font=self.font_label).pack(side="left")
         # 大号 −/＋ 按钮（原生 Spinbox 箭头太小）
@@ -234,10 +258,10 @@ class WeiboExporterGUI:
         ttk.Button(pages_box, text="＋", width=3, style="Big.TButton",
                    command=lambda: self._nudge_pages(1)).pack(side="left", padx=3)
         ttk.Label(frm_input, text="0 = 抓取全部", font=self.font_hint,
-                  foreground="gray").grid(row=row, column=3, sticky="w", pady=5, padx=(10, 0))
+                  foreground="gray").grid(row=row, column=3, sticky="w", pady=3, padx=(10, 0))
         # --- 导出格式 ---
         frm_fmt = ttk.LabelFrame(self.root, text=" 2. 导出格式 ", padding=12)
-        frm_fmt.pack(fill="x", padx=14, pady=8)
+        frm_fmt.pack(fill="x", padx=14, pady=3)
 
         self.fmt_vars = {}
         for i, fmt in enumerate(["html", "md", "pdf", "json", "txt"]):
@@ -271,18 +295,34 @@ class WeiboExporterGUI:
 
         # --- 进度 ---
         frm_progress = ttk.LabelFrame(self.root, text=" 3. 任务进度 ", padding=12)
-        frm_progress.pack(fill="both", expand=True, padx=14, pady=8)
+        frm_progress.pack(fill="both", expand=True, padx=14, pady=(3, 4))
+        self._frm_progress = frm_progress  # 供布局诊断（环境变量 WEIBO_LAYOUT_DEBUG）
 
         self.var_progress = tk.StringVar(value="就绪")
         ttk.Label(frm_progress, textvariable=self.var_progress,
                   font=self.font_progress).pack(anchor="w", pady=4)
 
         # 进度条：确定模式，用百分比真实反映抓取/导出进度（不再来回滑动）
+        # 进度条太窄（默认很扁）→ 用自定义 style 加大厚度，视觉更清晰；
+        # troughcolor（未填充轨道）默认深灰、和已填充色都偏暗 → 改成主题浅色，
+        # 这样进度条不再显得「又窄又看不清」。
+        try:
+            style.configure("Wb.Horizontal.TProgressbar", thickness=22,
+                            troughcolor="#cfd8dc", background="#2e86de",
+                            bordercolor="#b0bec5", lightcolor="#2e86de",
+                            darkcolor="#2e86de")
+        except Exception:
+            pass
         self.progress_bar = ttk.Progressbar(frm_progress, mode="determinate",
+                                            style="Wb.Horizontal.TProgressbar",
                                             length=200, maximum=100, value=0)
-        self.progress_bar.pack(fill="x", pady=(0, 6))
+        self.progress_bar.pack(fill="x", pady=(0, 4))
 
-        self.log_text = ScrolledText(frm_progress, height=13, state="disabled",
+        # 黑色日志框：它是唯一 expand=True 的可伸缩控件。当「其余固定内容总高」已
+        # 等于/超过窗口客户区（约 685px）时，Tkinter 会把它压到只剩一条（实测 23px）。
+        # 把请求高度降到 3 行：内容总需求降到窗口高度以内，日志框就有余量正常显示，
+        # 窗口更高时它仍随 expand 撑满剩余空间。
+        self.log_text = ScrolledText(frm_progress, height=3, state="disabled",
                                      font=self.font_log, bg="#1e1e1e", fg="#d4d4d4")
         self.log_text.pack(fill="both", expand=True, pady=(4, 0))
 
@@ -626,7 +666,54 @@ def main() -> None:
         sys.exit(_child_main_from_args(sys.argv[sys.argv.index("--weibo-login-worker") + 1:]))
 
     root = tk.Tk()
+    # 让窗口自适应屏幕可用高度并居中：Windows 任务栏约占底部 ~40px，
+    # 窗口若设得过高，底部「进度区」会被任务栏压住（实测屏幕 800 / 可用 760，
+    # 窗口 750 时底边贴到 y=800，进度区只剩 1px）。
+    # 这里取「屏幕可用高度」，并扣掉 Windows 标题栏+边框（实测约 39px）：
+    # geometry() 只设客户区，系统会在顶部再加标题栏，不扣就会超出安全区压住任务栏。
+    # 窗口尺寸按屏幕自动匹配：先取「屏幕可用高度」（已自动扣除 Windows 任务栏），
+    # 再按各区块的真实需求高度决定窗口大小，避免写死数字在不同分辨率下错位。
+    _CHROME = 45  # 标题栏 + 边框余量
+    _screen_h = root.winfo_screenheight()
+    _screen_w = root.winfo_screenwidth()
+    try:
+        _avail_h = root.winfo_screenheight() - 40  # 保守再扣 40，给标题栏+边框留量
+    except Exception:
+        _avail_h = 700
+
+    _win_w = min(920, _screen_w - 40)
+    # 客户区目标高度 = 屏幕可用高 − 标题栏边框。窗口整体(客户区+标题栏)落在可用高内。
+    _win_h = max(600, _avail_h - 5)
+    _x = (_screen_w - _win_w) // 2
+    _y = max(0, (_screen_h - _win_h - _CHROME) // 2 - 15)
+    root.geometry(f"{_win_w}x{_win_h}+{_x}+{_y}")
+    root.minsize(800, 560)
     app = WeiboExporterGUI(root)
+
+    # 布局诊断：仅在设 WEIBO_LAYOUT_DEBUG 时，于真实 mainloop 首帧打印各区块高度，
+    # 用于定位「进度区/日志框被压扁」问题。正常使用不设该变量，完全无影响。
+    if os.environ.get("WEIBO_LAYOUT_DEBUG"):
+        def _dump_layout():
+            root.update_idletasks()
+            fp = app._frm_progress
+            lt = app.log_text
+            pb = app.progress_bar
+            print(f"[布局诊断] 窗口客户区高 = {root.winfo_height()}px  "
+                  f"全部内容需求高 = {root.winfo_reqheight()}px")
+            for ch in root.winfo_children():
+                print(f"  · {ch.winfo_class():<12} "
+                      f"实际={ch.winfo_height():>4}px 需求={ch.winfo_reqheight():>4}px "
+                      f"{ch}")
+            print(f"[布局诊断] 进度区 frm_progress = {fp.winfo_height()}px  "
+                  f"请求高 = {fp.winfo_reqheight()}px")
+            print(f"[布局诊断] 进度条 progress_bar = {pb.winfo_height()}px")
+            print(f"[布局诊断] 日志框 log_text    = {lt.winfo_height()}px  "
+                  f"请求高 = {lt.winfo_reqheight()}px")
+            root.destroy()
+        root.after(300, _dump_layout)
+        root.mainloop()
+        return
+
     root.mainloop()
 
 

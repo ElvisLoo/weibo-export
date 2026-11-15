@@ -279,8 +279,9 @@ def _login_child(url: str, result_path: str) -> None:
     var b = document.createElement('button');
     b.id = 'wbCookieBtn';
     b.textContent = '✅ 已登录？点此获取 Cookie';
+    // 底部悬浮按钮：避免压住登录页顶部的「登录/注册」按钮（微博登录控件在页面顶部）
     b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;'
-      + 'width:100%;padding:16px;font-size:18px;font-weight:bold;'
+      + 'width:100%;padding:14px;font-size:17px;font-weight:bold;'
       + 'background:#e6162d;color:#fff;border:0;border-radius:0;'
       + 'box-shadow:0 -2px 8px rgba(0,0,0,.25);cursor:pointer;';
     b.onclick = function(){

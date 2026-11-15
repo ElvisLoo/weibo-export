@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>极客港 · 微博导出工具 — 把你的微博完整备份到本地</title>
+<meta name="description" content="极客港微博导出工具：一键备份你的新浪微博，支持 HTML / Markdown / PDF / JSON / TXT 五种格式，图片离线保存，数据只存本机，安全可控。">
+<style>
+:root{
+  --wb-red:#e6162d; --wb-red-dark:#c1121f;
+  --ink:#1a1a1a; --ink-2:#4a4a4a; --muted:#8a8a8a;
+  --bg:#fff; --bg-soft:#f7f8fa; --line:#ececec;
+  --radius:14px; --shadow:0 2px 16px rgba(0,0,0,.06);
+  --maxw:1080px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+  color:var(--ink); background:var(--bg); line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--wb-red);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+/* 顶部导航 */
+nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);
+    backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px}
+.brand .dot{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#ff6b6b,#e6162d);
+            display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px}
+.nav-links{display:flex;gap:26px;font-size:14.5px;color:var(--ink-2)}
+.nav-links a{color:var(--ink-2)}
+.nav-links a:hover{color:var(--wb-red);text-decoration:none}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:10px;
+     font-weight:600;font-size:15px;transition:.18s;cursor:pointer;border:0}
+.btn-primary{background:var(--wb-red);color:#fff;box-shadow:0 4px 14px rgba(230,22,45,.3)}
+.btn-primary:hover{background:var(--wb-red-dark);color:#fff;text-decoration:none;transform:translateY(-1px)}
+.btn-ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.btn-ghost:hover{border-color:var(--wb-red);color:var(--wb-red);text-decoration:none}
+
+/* Hero */
+.hero{padding:84px 0 72px;background:
+   radial-gradient(1200px 400px at 80% -10%, rgba(230,22,45,.06), transparent),
+   linear-gradient(180deg,#fff, var(--bg-soft))}
+.hero .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:56px;align-items:center}
+.eyebrow{display:inline-block;padding:5px 12px;border-radius:20px;background:#fdecee;
+         color:var(--wb-red);font-size:13px;font-weight:600;margin-bottom:18px}
+h1{font-size:46px;line-height:1.2;font-weight:800;letter-spacing:-.5px}
+h1 .hl{color:var(--wb-red)}
+.hero p.sub{margin-top:18px;font-size:18px;color:var(--ink-2);max-width:520px}
+.hero .cta{margin-top:30px;display:flex;gap:14px;flex-wrap:wrap}
+.hero .meta-line{margin-top:22px;font-size:13.5px;color:var(--muted)}
+.hero .meta-line b{color:var(--ink-2)}
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="dot">眼</span>极客港 · 微博导出</div>
+    <div class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#how">使用</a>
+      <a href="#faq">常见问题</a>
+      <a href="https://github.com/ElvisLoo/weibo-export" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">开源 · 免费 · 数据只存本机</span>
+      <h1>把你的微博<br><span class="hl">完整备份</span>到本地</h1>
+      <p class="sub">一键导出新浪微博为 HTML / Markdown / PDF / JSON / TXT 五种格式。图片离线保存，随时可读，不受平台限制。</p>
+      <div class="cta">
+        <a href="https://github.com/ElvisLoo/weibo-export/releases/latest" class="btn btn-primary" target="_blank" rel="noopener">⬇️ 下载最新版</a>
+        <a href="https://github.com/ElvisLoo/weibo-export" class="btn btn-ghost" target="_blank" rel="noopener">⭐ 查看源码</a>
+      </div>
+      <div class="meta-line">当前版本 <b>v1.3.9</b> · Windows x64 · 无需安装 · 解压即用</div>
+    </div>
+    <div style="display:flex;justify-content:center">
+      <div style="width:320px;background:#fff;border-radius:18px;box-shadow:var(--shadow);overflow:hidden;border:1px solid var(--line)">
+        <div style="background:#e6162d;color:#fff;padding:14px 20px;font-weight:700;font-size:14px">极客港 · 微博导出工具</div>
+        <div style="padding:20px 22px;font-size:13.5px;color:var(--ink-2)">
+          <div style="margin-bottom:14px"><b style="color:var(--ink)">📥 导出格式</b><br>HTML · MD · PDF · JSON · TXT</div>
+          <div style="margin-bottom:14px"><b style="color:var(--ink)">🖼️ 图片离线</b><br>media/ 文件夹本地保存，断网可看</div>
+          <div style="margin-bottom:14px"><b style="color:var(--ink)">🔒 数据不出本机</b><br>Cookie 和数据只存你自己电脑</div>
+          <div><b style="color:var(--ink)">⏸️ 断点续传</b><br>几万条微博分批抓，关掉再继续</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" style="padding:72px 0;background:#fff">
+  <div class="wrap">
+    <h2 style="font-size:30px;font-weight:800;text-align:center;margin-bottom:8px">为什么选极客港微博导出</h2>
+    <p style="text-align:center;color:var(--muted);margin-bottom:48px;font-size:15.5px">专注做一件事：把你自己的微博安全、完整地备份到本地</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:28px">
+      <div class="card"><div class="icon">📄</div><h3>五种格式导出</h3><p>HTML 可在浏览器查看、Markdown 方便编辑、PDF 适合打印、JSON 方便程序处理、TXT 纯文本轻量。</p></div>
+      <div class="card"><div class="icon">🖼️</div><h3>图片离线保存</h3><p>自动下载全部配图到 media/ 文件夹，断网也能完整查看每条微博的图片内容。</p></div>
+      <div class="card"><div class="icon">🔒</div><h3>数据不出本机</h3><p>Cookie 和抓取的数据只存你自己电脑的 SQLite 数据库，不上传、不采集、不发送。</p></div>
+      <div class="card"><div class="icon">⏸️</div><h3>断点续传</h3><p>大 V 账号几万条微博分批抓取，中途关掉软件，下次打开自动从上次进度继续。</p></div>
+      <div class="card"><div class="icon">📝</div><h3>长博文全文展开</h3><p>自动识别超长微博，调用全文接口拿到完整正文，不遗漏一个字。</p></div>
+      <div class="card"><div class="icon">🕐</div><h3>按时间精确排序</h3><p>导出内容严格从新到旧排列，兼容微博英文时间格式，不会乱序。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW -->
+<section id="how" style="padding:72px 0;background:var(--bg-soft)">
+  <div class="wrap">
+    <h2 style="font-size:30px;font-weight:800;text-align:center;margin-bottom:48px">三步完成备份</h2>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:28px">
+      <div class="step"><div class="num">1</div><h3>下载解压</h3><p>从 GitHub Releases 下载最新版，解压后整个文件夹放在一起，双击 exe 运行。</p></div>
+      <div class="step"><div class="num">2</div><h3>登录获取 Cookie</h3><p>点击「登录取 Cookie」，在弹出的浏览器窗口登录微博账号，工具自动填入 Cookie。</p></div>
+      <div class="step"><div class="num">3</div><h3>抓取并导出</h3><p>输入要备份的用户 ID，点「开始抓取」，完成后选格式点「导出」，文件就保存在本机导出目录。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" style="padding:72px 0;background:#fff">
+  <div class="wrap" style="max-width:720px">
+    <h2 style="font-size:30px;font-weight:800;text-align:center;margin-bottom:40px">常见问题</h2>
+    <div class="faq-item"><h4>导出数量比微博主页显示的少？</h4><p>主页总数包含已删除的微博，受限内容（仅自己可见、定时公开）也抓不全，这是正常的。</p></div>
+    <div class="faq-item"><h4>支持 Mac / Linux 吗？</h4><p>目前只提供 Windows x64 版本。源码完全开放，Mac/Linux 用户可以自行从源码运行。</p></div>
+    <div class="faq-item"><h4>会泄露我的 Cookie 吗？</h4><p>不会。Cookie 只存在你自己电脑上，工具不做任何上传或转发，源码开放可自行验证。</p></div>
+    <div class="faq-item"><h4>大 V 有几万条微博，一次能抓完吗？</h4><p>可以，支持断点续传。如果中途中断，下次打开工具会自动从上次进度继续，不会重复抓。</p></div>
+    <div class="faq-item"><h4>这个工具免费吗？</h4><p>完全免费，开源。基于 MIT 许可证，欢迎个人使用，商用请联系极客港。</p></div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer style="padding:48px 0;background:var(--bg-soft);border-top:1px solid var(--line)">
+  <div class="wrap" style="text-align:center;color:var(--muted);font-size:14px">
+    <div style="margin-bottom:12px">
+      <b>极客港 · jikegang.com</b> · 开源微博备份工具
+    </div>
+    <div style="margin-bottom:12px">
+      <a href="https://github.com/ElvisLoo/weibo-export" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/ElvisLoo/weibo-export/releases" target="_blank" rel="noopener">下载</a> ·
+      <a href="https://github.com/ElvisLoo/weibo-export/issues" target="_blank" rel="noopener">反馈问题</a>
+    </div>
+    <div>仅限个人备份使用 · 请勿泄露 Cookie · 遵守《微博用户协议》· 数据不出本机</div>
+  </div>
+</footer>
+
+<!-- EXTRA CSS -->
+<style>
+.card{background:var(--bg-soft);border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);transition:.18s}
+.card:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.card .icon{font-size:32px;margin-bottom:14px}
+.card h3{font-size:17px;font-weight:700;margin-bottom:8px}
+.card p{font-size:14.5px;color:var(--ink-2)}
+.step{background:#fff;border-radius:var(--radius);padding:32px;text-align:center;box-shadow:var(--shadow)}
+.step .num{width:48px;height:48px;border-radius:50%;background:var(--wb-red);color:#fff;
+           font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;
+           margin:0 auto 16px}
+.step h3{font-size:18px;margin-bottom:10px}
+.step p{font-size:14.5px;color:var(--ink-2)}
+.faq-item{margin-bottom:22px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.faq-item h4{font-size:16px;margin-bottom:8px}
+.faq-item p{font-size:14.5px;color:var(--ink-2)}
+@media(max-width:768px){
+  .hero .wrap{grid-template-columns:1fr;gap:40px}
+  .hero h1{font-size:34px}
+  .features .wrap{grid-template-columns:1fr}
+  .nav-links{display:none}
+}
+</style>
+</body>
+</html>

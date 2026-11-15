@@ -226,6 +226,56 @@ class BaseCrawler:
         return CrawlResult(user=user, task_id=task_id, total_posts=db.count_posts(conn, user_id),
                            pages_fetched=pages_fetched, stopped_reason=reason)
 
+    def fill_longtext(self, conn, user_id: str) -> Dict[str, Any]:
+        """补全某用户已入库、但仍是截断版的长博文全文。
+
+        背景：长文全文展开在抓取阶段完成（run 里的 is_long 分支）。用 v1.3.7 及
+        更早版本抓的数据，长博文只存了截断版（末尾带「全文」链接）。本方法只扫
+        这些截断记录，逐条调全文接口补全，**无需重新抓几百条**。
+
+        判定截断：raw 里 isLongText/isLong 为真，或正文末尾带「全文」。
+        进度通过 _emit 回调（type="longtext_progress" / "longtext_done"）。
+        """
+        user_id = str(user_id).strip()
+        self._warmup_session()
+
+        # 找出所有疑似截断的长博文
+        rows = db.get_posts(conn, user_id)
+        targets = []
+        for p in rows:
+            raw = p.get("raw")
+            try:
+                mb = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
+            except Exception:
+                mb = {}
+            is_long = mb.get("isLongText") or mb.get("isLong")
+            body = (p.get("text") or "") + (p.get("text_raw") or "")
+            endswith_full = "全文" in body[-30:]
+            if is_long or endswith_full:
+                targets.append(p["mblog_id"])
+
+        total = len(targets)
+        self._emit({"type": "longtext_progress", "user_id": user_id,
+                    "index": 0, "total": total, "filled": 0,
+                    "message": f"发现 {total} 条待补全长博文"})
+
+        filled = 0
+        for i, mid in enumerate(targets, 1):
+            if self.stop_flag():
+                break
+            full = self._fetch_longtext(mid)
+            if full:
+                db.update_post_text(conn, mid, full, full)
+                filled += 1
+            self._emit({"type": "longtext_progress", "user_id": user_id,
+                        "index": i, "total": total, "filled": filled,
+                        "mblog_id": mid})
+            time.sleep(1.0)  # 温和限速，避免连续请求触发风控
+
+        self._emit({"type": "longtext_done", "user_id": user_id,
+                    "total": total, "filled": filled})
+        return {"total": total, "filled": filled}
+
 
 def _parse_count_cn(value: Any) -> int:
     """把微博接口返回的计数解析成整数（失败返回 0，不抛异常）。

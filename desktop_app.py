@@ -280,6 +280,12 @@ class WeiboExporterGUI:
         self.btn_export = ttk.Button(frm_btn, text="导出文件", command=self._start_export)
         self.btn_export.pack(side="left", padx=(0, 10))
 
+        # 补全长文：只扫库里已是截断版的长博文，逐条调全文接口补全，
+        # 无需重新抓几百条。用于 v1.3.7 及更早版本抓的旧数据。
+        self.btn_fill = ttk.Button(frm_btn, text="补全长文",
+                                   command=self._start_fill_longtext)
+        self.btn_fill.pack(side="left", padx=(0, 10))
+
         self.btn_stop = ttk.Button(frm_btn, text="停止", command=self._stop, state="disabled")
         self.btn_stop.pack(side="left")
 
@@ -523,10 +529,99 @@ class WeiboExporterGUI:
             self._set_progress(
                 f"网络波动，第 {state.get('attempt', '?')} 次重试中...")
         elif t == "longtext_fetched":
-            # 长博文全文补全成功
+            # 长博文全文补全成功（抓取过程中）
             self._log(
                 f"📄 已补全长博文全文（{state.get('mblog_id', '')}，"
                 f"{state.get('len', 0)} 字）")
+        elif t == "longtext_progress":
+            # 补全长文过程中：按 已处理条数 / 总条数 填充进度条
+            idx = max(0, state.get("index", 0))
+            total = max(1, state.get("total", 1))
+            pct = min(99, int(idx / total * 100))
+            self.progress_bar["value"] = pct
+            self._set_progress(
+                f"补全长文：{idx}/{total} 条，已补全 {state.get('filled', 0)} 条"
+                f"（{pct}%）")
+        elif t == "longtext_done":
+            total = state.get("total", 0)
+            filled = state.get("filled", 0)
+            self.progress_bar["value"] = 100
+            self._set_progress(
+                f"长文补全完成：补全 {filled}/{total} 条")
+
+    def _start_fill_longtext(self):
+        uid = self._resolve_uid_from_input()
+        if not uid:
+            return
+        cookie = self._get_cookie().strip()
+        if not cookie:
+            messagebox.showinfo(
+                "需要 Cookie",
+                "补全长文需要登录态 Cookie（要用登录 Cookie 才能调全文接口）。\n"
+                "请先在上方 Cookie 栏粘贴，或点「登录取 Cookie」自动获取。")
+            return
+
+        self.btn_crawl.config(state="disabled")
+        self.btn_export.config(state="disabled")
+        self.btn_fill.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.stop_flag.clear()
+        self._set_progress("正在扫描待补全长博文...")
+
+        self.fill_thread = threading.Thread(
+            target=self._fill_worker,
+            args=(uid, cookie),
+            daemon=True,
+        )
+        self.fill_thread.start()
+
+    def _fill_worker(self, uid: str, cookie: str):
+        from weibo_export import db, crawler as crawler_mod
+
+        def progress_cb(payload: dict):
+            with self.job_lock:
+                self.job_state.update(payload)
+            self.root.after(0, lambda: self._update_progress_ui())
+
+        db_path = os.path.join(_data_dir(), "weibo.db")
+        conn = None
+        crawler = None
+        try:
+            conn = db.connect(db_path)
+            crawler = crawler_mod.build_crawler(
+                kind="weibo", cookie=cookie, interval=20,
+                progress=progress_cb,
+                stop_flag=lambda: self.stop_flag.is_set(),
+            )
+            result = crawler.fill_longtext(conn, uid)
+            self.root.after(0, lambda: self._log(
+                f"长文补全完成：发现 {result['total']} 条，"
+                f"成功补全 {result['filled']} 条"
+                + ("（其余可能是受限/已删微博，接口拿不到全文）"
+                   if result['filled'] < result['total'] else "")))
+            self.root.after(0, lambda: self._set_progress(
+                f"长文补全完成：补全 {result['filled']}/{result['total']} 条"))
+            self.root.after(0, lambda: messagebox.showinfo(
+                "补全长文完成",
+                f"扫描到 {result['total']} 条截断长博文\n"
+                f"成功补全 {result['filled']} 条。\n\n"
+                f"现在可以点「导出文件」重新导出，长博文即为完整正文。"))
+        except Exception as e:
+            self.root.after(0, lambda: self._log(f"长文补全失败：{e}"))
+            self.root.after(0, lambda: self._set_progress(f"长文补全出错：{e}"))
+            _write_log(f"长文补全异常：{traceback.format_exc()}")
+        finally:
+            if crawler is not None:
+                try:
+                    crawler.session.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self.root.after(0, lambda: self._ui_idle())
 
     def _ui_idle(self):
         try:
@@ -535,6 +630,7 @@ class WeiboExporterGUI:
             pass
         self.btn_crawl.config(state="normal")
         self.btn_export.config(state="normal")
+        self.btn_fill.config(state="normal")
         self.btn_stop.config(state="disabled")
 
     def _update_export_bar(self, pct: int):

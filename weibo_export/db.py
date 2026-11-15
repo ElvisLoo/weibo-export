@@ -176,6 +176,25 @@ def upsert_posts(conn: sqlite3.Connection, posts: Iterable[Dict[str, Any]]) -> i
     return n
 
 
+def update_post_text(conn: sqlite3.Connection, mblog_id: str,
+                     new_text: str, new_text_raw: str) -> bool:
+    """只更新某条博文的正文（text / text_raw），用于长文补全。
+
+    与 upsert_posts 不同：本函数只改正文两列，不触碰计数、图片、raw 等字段，
+    避免补全长文时误覆盖已抓到的其它信息。
+    返回是否命中一条记录。
+    """
+    if not mblog_id:
+        return False
+    with _WRITE_LOCK:
+        cur = conn.execute(
+            "UPDATE posts SET text=?, text_raw=? WHERE mblog_id=?",
+            (new_text, new_text_raw, str(mblog_id)),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def get_user(conn: sqlite3.Connection, user_id: str) -> Optional[Dict[str, Any]]:
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (str(user_id),)).fetchone()
     return dict(row) if row else None

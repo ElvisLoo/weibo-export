@@ -13,6 +13,31 @@ import json
 import os
 import sqlite3
 import threading
+
+
+def _safe_count(value) -> int:
+    """把微博计数字段安全转成整数；脏数据返回 0，绝不抛异常。
+
+    微博接口对微博数/粉丝数/互动数，按量级可能返回数字或中文字符串
+    （如 696 / "696" / "256.4万"）。这里统一兼容，解析失败降级为 0。
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if not isinstance(value, str):
+        return 0
+    s = value.strip()
+    if not s:
+        return 0
+    try:
+        if "亿" in s:
+            return int(float(s.replace("亿", "").strip()) * 1e8)
+        if "万" in s:
+            return int(float(s.replace("万", "").strip()) * 1e4)
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -102,8 +127,8 @@ def upsert_user(conn: sqlite3.Connection, user: Dict[str, Any]) -> None:
                 str(user.get("user_id", "")),
                 user.get("screen_name", ""),
                 user.get("description", ""),
-                int(user.get("statuses_count", 0) or 0),
-                int(user.get("followers_count", 0) or 0),
+                _safe_count(user.get("statuses_count", 0)),
+                _safe_count(user.get("followers_count", 0)),
                 time.time(),
             ),
         )
@@ -136,9 +161,9 @@ def upsert_posts(conn: sqlite3.Connection, posts: Iterable[Dict[str, Any]]) -> i
                     p.get("created_at", ""),
                     p.get("text", ""),
                     p.get("text_raw", ""),
-                    int(p.get("reposts_count", 0) or 0),
-                    int(p.get("comments_count", 0) or 0),
-                    int(p.get("attitudes_count", 0) or 0),
+                    _safe_count(p.get("reposts_count", 0)),
+                    _safe_count(p.get("comments_count", 0)),
+                    _safe_count(p.get("attitudes_count", 0)),
                     p.get("source", ""),
                     p.get("region_name", ""),
                     json.dumps(p.get("pic_urls", []), ensure_ascii=False),

@@ -30,10 +30,19 @@ from weibo_export.crawler import _parse_uid_input
 
 
 def _data_dir() -> str:
-    """数据目录：文档/微博导出/"""
+    """数据目录：文档/微博导出/（仅存放 weibo.db 与日志）。"""
     base = os.path.join(os.path.expanduser("~"), "Documents", "微博导出")
     os.makedirs(base, exist_ok=True)
     return base
+
+
+def _export_dir() -> str:
+    """默认导出目录：优先 D 盘根目录「微博导出」，D 盘不存在时回退用户目录。
+
+    独立于 _data_dir：数据库仍放在 _data_dir，导出的文件/图片走这里。
+    """
+    from weibo_export.paths import export_dir
+    return export_dir()
 
 
 def _log_dir() -> str:
@@ -212,9 +221,9 @@ class WeiboExporterGUI:
         frm_dir.pack(fill="x")
         ttk.Label(frm_dir, text="导出目录：", font=self.font_hint,
                   foreground="gray").pack(side="left")
-        ttk.Label(frm_dir, text=_data_dir(), font=self.font_hint,
+        ttk.Label(frm_dir, text=_export_dir(), font=self.font_hint,
                   foreground="gray").pack(side="left")
-        ttk.Button(frm_dir, text="打开目录", command=lambda: self._open_dir(_data_dir())
+        ttk.Button(frm_dir, text="打开目录", command=lambda: self._open_dir(_export_dir())
                    ).pack(side="right")
 
         # --- 进度 ---
@@ -225,8 +234,9 @@ class WeiboExporterGUI:
         ttk.Label(frm_progress, textvariable=self.var_progress,
                   font=self.font_progress).pack(anchor="w", pady=4)
 
-        # 进度条：让用户看到连续推进
-        self.progress_bar = ttk.Progressbar(frm_progress, mode="indeterminate", length=200)
+        # 进度条：确定模式，用百分比真实反映抓取/导出进度（不再来回滑动）
+        self.progress_bar = ttk.Progressbar(frm_progress, mode="determinate",
+                                            length=200, maximum=100, value=0)
         self.progress_bar.pack(fill="x", pady=(0, 6))
 
         self.log_text = ScrolledText(frm_progress, height=13, state="disabled",
@@ -346,7 +356,7 @@ class WeiboExporterGUI:
         self.stop_flag.clear()
         self.pages_fetched = 0
         self._set_progress("正在启动抓取...")
-        self.progress_bar.start(12)
+        self.progress_bar["value"] = 0  # 归零，等待真实进度填充
 
         self.crawl_thread = threading.Thread(
             target=self._crawl_worker,
@@ -408,13 +418,19 @@ class WeiboExporterGUI:
             state = dict(self.job_state)
         t = state.get("type", "")
         if t == "page_start":
-            self.progress_bar.start(12)  # 进度条动起来
             self._set_progress(f"正在抓取第 {state.get('page', '?')} 页...")
         elif t == "page_done":
             self.pages_fetched += 1
+            # 抓取进度：以「已完成页数 / 用户设定的最大页数」填充。
+            # 最大页数为 0（抓到底）时，用当前数据页作为估计，保持推进感。
+            total = state.get("max_pages") or state.get("page") or self.pages_fetched
+            total = max(1, int(total))
+            pct = min(99, int(self.pages_fetched / total * 100))
+            self.progress_bar["value"] = pct
             self._set_progress(
                 f"已完成 {self.pages_fetched} 页（当前数据页 {state.get('page', '?')}），"
-                f"新增 {state.get('new_posts', 0)} 条，累计入库 {state.get('total_in_db', 0)} 条")
+                f"新增 {state.get('new_posts', 0)} 条，累计入库 {state.get('total_in_db', 0)} 条"
+                f"（{pct}%）")
             self._log(f"第 {state.get('page', '?')} 页完成：新增 {state.get('new_posts', 0)} 条")
         elif t == "retry":
             # 抓取遇到瞬时错误正在重试，给用户明确反馈（而不是看起来卡住）
@@ -437,6 +453,13 @@ class WeiboExporterGUI:
         self.btn_crawl.config(state="normal")
         self.btn_export.config(state="normal")
         self.btn_stop.config(state="disabled")
+
+    def _update_export_bar(self, pct: int):
+        """导出进度条：线程安全地更新为确定百分比。"""
+        try:
+            self.progress_bar["value"] = max(0, min(100, int(pct)))
+        except Exception:
+            pass
 
     # ================= 导出 =================
 
@@ -497,6 +520,19 @@ class WeiboExporterGUI:
     def _export_worker(self, uid: str, fmts: list):
         from weibo_export import db, exporter
 
+        def export_progress(payload: dict):
+            # 导出进度：按「已完成格式数 / 总格式数」填充进度条
+            idx = payload.get("index", 0)
+            total = max(1, payload.get("total", 1))
+            pct = int(idx / total * 100)
+            fmt = payload.get("fmt", "")
+            ptype = payload.get("type")
+            if ptype == "export_done":
+                # 用默认参数固化 fmt/pct，避免 lambda 捕获可变变量
+                self.root.after(0, lambda f=fmt, i=idx, t=total: self._set_progress(
+                    f"已导出 {f}（{i}/{t}）"))
+            self.root.after(0, lambda p=pct: self._update_export_bar(p))
+
         db_path = os.path.join(_data_dir(), "weibo.db")
         conn = None
         try:
@@ -505,8 +541,10 @@ class WeiboExporterGUI:
                 self.root.after(0, lambda: messagebox.showinfo(
                     "无数据", f"用户 {uid} 在本地数据库中暂无博文，请先抓取。"))
                 return
-            out_dir = _data_dir()
-            results = exporter.export_all(conn, uid, out_dir, fmts)
+            out_dir = _export_dir()
+            self.root.after(0, lambda: self.progress_bar.__setitem__("value", 0))
+            results = exporter.export_all(conn, uid, out_dir, fmts,
+                                          progress=export_progress)
             files = [f"{r['format']}: {os.path.basename(r['path'])} ({r['size']} B)"
                      for r in results]
             self.root.after(0, lambda: self._log("导出完成：\n  " + "\n  ".join(files)))

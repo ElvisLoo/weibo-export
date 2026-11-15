@@ -60,6 +60,27 @@ def data_dir() -> str:
     return base
 
 
+def export_dir() -> str:
+    """默认导出目录：优先 D 盘根目录的「微博导出」，D 盘不存在时回退。
+
+    用户明确要求把默认导出目录改到 D 盘根目录，微博导出文件夹。
+    """
+    # 尝试 D 盘（Windows）
+    if os.name == "nt":
+        d_path = "D:\\微博导出"
+        try:
+            if os.path.exists("D:\\") or os.access("D:\\", os.W_OK):
+                os.makedirs(d_path, exist_ok=True)
+                return d_path
+        except (OSError, PermissionError):
+            pass
+
+    # 回退到用户目录
+    fallback = os.path.join(os.path.expanduser("~"), "微博导出")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
 def static_dir() -> str:
     """界面静态资源目录。
     打包后：_MEIPASS/weibo_export/static（与 spec 的 datas 目标一致）

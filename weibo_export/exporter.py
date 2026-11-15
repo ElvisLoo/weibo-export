@@ -159,11 +159,15 @@ import hashlib
 _MEDIA_DIR_NAME = "media"
 
 
-def _download_media(urls: List[str], media_dir: str) -> Dict[str, str]:
-    """把图片下载到 media_dir，返回 {远程url: 本地文件名}。
+def _download_media(urls: List[str], media_dir: str,
+                    user_rel: str = _MEDIA_DIR_NAME) -> Dict[str, str]:
+    """把图片下载到 media_dir，返回 {远程url: 本地相对路径}。
 
     新浪图床有防盗链：带微博 Referer 反而 403，实测空 User-Agent 可下载。
     并发下载提速；同一 url 只下载一次；失败则不写入映射，导出时回退为远程链接。
+
+    user_rel 是 media_dir 相对于 out_dir 的相对路径（如 "media/张三_123"），
+    返回的相对路径用它在 HTML/MD 里正确引用按用户分文件夹后的图片。
     """
     import requests
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -210,7 +214,9 @@ def _download_media(urls: List[str], media_dir: str) -> Dict[str, str]:
                 u, name = fut.result()
                 if name:
                     mapping[u] = name
-    return mapping
+
+    # 把文件名转成含用户文件夹的相对路径，供导出文件正确引用
+    return {u: f"{user_rel}/{name}" for u, name in mapping.items()}
 
 
 def _collect_all_pic_urls(posts: List[Dict[str, Any]]) -> List[str]:
@@ -242,12 +248,15 @@ def export(conn, user_id: str, out_dir: str, fmt: str) -> Dict[str, Any]:
     screen_name = user.get("screen_name") or f"user_{user_id}"
     base = f"weibo_{_safe_filename(screen_name)}_{user_id}"
 
-    # 下载图片到本地 media/，实现离线备份（绕开新浪防盗链）。
+    # 下载图片到本地 media/<用户文件夹>/，实现离线备份（绕开新浪防盗链）。
+    # 每个用户单独一个子文件夹，避免多用户图片混杂无法分辨。
     # 各格式共用同一份本地图片，已缓存的不会重复下载。
-    media_dir = os.path.join(out_dir, _MEDIA_DIR_NAME)
+    user_folder = _safe_filename(f"{screen_name}_{user_id}")
+    media_dir = os.path.join(out_dir, _MEDIA_DIR_NAME, user_folder)
     url_map: Dict[str, str] = {}
     if fmt in ("html", "md", "txt"):
-        url_map = _download_media(_collect_all_pic_urls(posts), media_dir)
+        url_map = _download_media(_collect_all_pic_urls(posts), media_dir,
+                                  user_rel=_MEDIA_DIR_NAME + "/" + user_folder)
 
     dispatch = {
         "html": _export_html, "md": _export_md, "pdf": _export_pdf,
@@ -256,11 +265,28 @@ def export(conn, user_id: str, out_dir: str, fmt: str) -> Dict[str, Any]:
     path = dispatch[fmt](posts, user, os.path.join(out_dir, f"{base}.{fmt}"),
                          url_map=url_map)
     return {"format": fmt, "path": path, "count": len(posts),
-            "size": os.path.getsize(path) if os.path.exists(path) else 0}
+            "size": os.path.getsize(path) if os.path.exists(path) else 0,
+            "media_dir": media_dir}
 
 
-def export_all(conn, user_id: str, out_dir: str, fmts: Iterable[str]) -> List[Dict[str, Any]]:
-    return [export(conn, user_id, out_dir, f) for f in fmts]
+def export_all(conn, user_id: str, out_dir: str, fmts: Iterable[str],
+               progress: Optional[callable] = None) -> List[Dict[str, Any]]:
+    """导出某用户多个格式。progress(payload) 逐个格式回调，用于进度条。
+
+    payload: {"type": "export_start"|"export_done", "index": i, "total": n,
+              "fmt": 当前格式, "media": 图片数(仅 start)}
+    """
+    fmts = list(fmts)
+    total = len(fmts)
+    if progress:
+        progress({"type": "export_start", "index": 0, "total": total, "fmt": fmts[0]})
+    results = []
+    for i, f in enumerate(fmts):
+        r = export(conn, user_id, out_dir, f)
+        results.append(r)
+        if progress:
+            progress({"type": "export_done", "index": i + 1, "total": total, "fmt": f})
+    return results
 
 
 # ---------------- 视图模型：把博文整理成各格式都好用的结构 ----------------
@@ -268,12 +294,13 @@ def export_all(conn, user_id: str, out_dir: str, fmts: Iterable[str]) -> List[Di
 def _build_view(posts: List[Dict[str, Any]], url_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     """为每条博文准备 pic_urls(list)、retweet(dict|None)、text(纯文本)。
 
-    url_map 不为空时（本地已下载图片），把图片 url 替换为本地相对路径 "media/xxx"，
-    使导出文件离线也能显示图片、不受新浪防盗链影响。
+    url_map 不为空时（本地已下载图片），把图片 url 替换为本地相对路径
+    "media/<用户文件夹>/xxx"，使导出文件离线也能显示图片、不受新浪防盗链影响。
+    图片已按用户分文件夹，避免多用户混杂无法分辨。
     """
     def _resolve(u: str) -> str:
         if url_map and u in url_map:
-            return f"{_MEDIA_DIR_NAME}/{url_map[u]}"
+            return url_map[u]  # 已是含用户文件夹的相对路径
         return u
 
     out = []

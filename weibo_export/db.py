@@ -186,8 +186,13 @@ def list_users(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
 
 
 def get_posts(conn: sqlite3.Connection, user_id: str, limit: int = 0, offset: int = 0) -> List[Dict[str, Any]]:
-    """按时间倒序读取某用户的博文。limit=0 表示全部。"""
-    q = "SELECT * FROM posts WHERE user_id=? ORDER BY created_at DESC, mblog_id DESC"
+    """按时间倒序读取某用户的博文。limit=0 表示全部。
+
+    注意：真实微博数据 created_at 是英文格式（如 'Wed Sep 30 20:45:17 +0800 2020'），
+    SQL 的 ORDER BY created_at 对英文格式是按字母序，不是时间序。所以这里
+    在 Python 层面解析时间后排序（支持英文和标准两种格式）。
+    """
+    q = "SELECT * FROM posts WHERE user_id=?"
     if limit:
         q += " LIMIT ? OFFSET ?"
         rows = conn.execute(q, (str(user_id), limit, offset)).fetchall()
@@ -200,8 +205,49 @@ def get_posts(conn: sqlite3.Connection, user_id: str, limit: int = 0, offset: in
             d["pic_urls"] = json.loads(d.get("pic_urls") or "[]")
         except Exception:
             d["pic_urls"] = []
+        # 解析时间用于排序
+        d["_sort_key"] = _parse_weibo_time(d.get("created_at", ""))
         out.append(d)
+    # 按 Python 解析的时间戳倒序排序（最新在前）
+    out.sort(key=lambda x: x.get("_sort_key", 0), reverse=True)
+    # 清理内部排序键
+    for d in out:
+        d.pop("_sort_key", None)
     return out
+
+
+def _parse_weibo_time(s: str) -> float:
+    """解析微博时间字符串为 Unix 时间戳。
+
+    支持两种格式：
+    1. 微博原始英文格式: 'Wed Sep 30 20:45:17 +0800 2020'
+    2. 标准格式: '2023-11-15 06:13:20'
+    解析失败返回 0.0（排在最后）。
+    """
+    import time as _time
+    if not s:
+        return 0.0
+
+    # 尝试标准格式
+    try:
+        return _time.mktime(_time.strptime(s, "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, TypeError):
+        pass
+
+    # 尝试微博英文格式: 'Wed Sep 30 20:45:17 +0800 2020'
+    # 用 email.utils 解析（Python 标准库，专治这种 RFC 2822 格式）
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import timezone as _tz
+        dt = parsedate_to_datetime(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        pass
+
+    # 都解析失败，返回 0
+    return 0.0
 
 
 def count_posts(conn: sqlite3.Connection, user_id: str) -> int:

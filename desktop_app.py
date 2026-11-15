@@ -108,6 +108,44 @@ class WeiboExporterGUI:
 
     # ================= UI 构建 =================
 
+    def _icon_path(self):
+        """定位 app.ico（打包后从 _MEIPASS，源码从 assets/）。"""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return os.path.join(sys._MEIPASS, "app.ico")
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "assets", "app.ico")
+
+    def _build_brand(self, parent):
+        """顶部品牌区：大 logo 图标 + 标题 + 副标题。
+
+        logo 用 PIL 把 app.ico 的 256px 帧转成 PhotoImage 放大到 64px，
+        比 16px 标题栏图标醒目得多，解决"左上角 logo 太小"。
+        """
+        frm = ttk.Frame(parent)
+        frm.pack(fill="x")
+        # 左侧大 logo（64px）
+        try:
+            icon = self._icon_path()
+            if os.path.exists(icon):
+                from PIL import Image, ImageTk
+                img = Image.open(icon)
+                img.load()
+                img.size = (256, 256)  # 取最大帧
+                logo = img.convert("RGBA").resize((64, 64), Image.LANCZOS)
+                self._logo_photo = ImageTk.PhotoImage(logo)  # 保引用防 GC
+                tk.Label(frm, image=self._logo_photo).pack(side="left", padx=(0, 12))
+        except Exception as e:
+            _write_log(f"加载品牌 logo 失败：{e}")
+        # 右侧标题 + 副标题
+        txt = ttk.Frame(frm)
+        txt.pack(side="left", fill="y")
+        ttk.Label(txt, text="极客港 · 微博导出工具",
+                  font=("Microsoft YaHei UI", 22, "bold")).pack(anchor="w")
+        from weibo_export import __version__
+        ttk.Label(txt, text=f"本地运行 · 数据不出电脑 · v{__version__}",
+                  font=("Microsoft YaHei UI", 11),
+                  foreground="gray").pack(anchor="w")
+
     def _build_ui(self):
         # 全局字体：按用户偏好放大（在 v1.1.2 基础上再大一号）
         self.font_label = ("Microsoft YaHei UI", 13)
@@ -116,6 +154,11 @@ class WeiboExporterGUI:
         # 日志用系统默认中文字体（Consolas 无中文字形，中文会回退渲染导致发虚）
         self.font_log = ("Microsoft YaHei UI", 12)
         self.font_progress = ("Microsoft YaHei UI", 14, "bold")
+
+        # --- 顶部品牌区：大 logo + 标题（让左上角标识醒目）---
+        frm_brand = ttk.Frame(self.root, padding=(18, 14, 18, 6))
+        frm_brand.pack(fill="x")
+        self._build_brand(frm_brand)
 
         style = ttk.Style()
         try:

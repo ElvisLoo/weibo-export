@@ -82,6 +82,19 @@ def _login_keys_found(cookies) -> set:
     return found
 
 
+def _is_really_logged_in(names) -> bool:
+    """判断一组 cookie 名是否代表「真登录态」。
+
+    微博在未登录（游客态）时也会种下 SUB / SUBP —— 那只是游客标识，不是登录。
+    真正的登录态一定同时带有 SSOLoginState（或 MLOGIN）这类登录字段。
+    只看到 SUB 却没有登录字段 → 游客态，返回 False。
+
+    抽成纯函数，供 capture() 与 auto_probe 共用，避免两处判定不一致。
+    """
+    names = set(names or [])
+    return ("SSOLoginState" in names) or ("MLOGIN" in names)
+
+
 def _storage_path() -> str:
     path = os.path.join(os.path.expanduser("~"), "Documents", "微博导出", "_login_browser")
     os.makedirs(path, exist_ok=True)
@@ -154,15 +167,23 @@ def _login_child(url: str, result_path: str) -> None:
 
         def capture(self):
             try:
-                header = _native_capture()
-                _diag(f"原生多域抓取 header {len(header)} 字符")
+                raw = _native_capture()   # (header, names)
+                header, names = raw if isinstance(raw, tuple) else (raw, set())
+                _diag(f"原生多域抓取 header {len(header)} 字符，cookie 名={names}")
                 if not header:
                     return "未读取到 Cookie，请确认已在窗口内登录后再点。"
+                # 关键：区分「真登录」与「游客态」。微博未登录时也会种下 SUB/SUBP
+                # （游客标识），但真正的登录态一定同时有 SSOLoginState / MLOGIN。
+                # 只看到 SUB 却没有登录字段 → 是游客态，不算登录成功，拒绝写入，
+                # 让用户继续在窗口里登录。
+                if not _is_really_logged_in(names):
+                    _diag(f"⚠ 仅检测到游客态 cookie（names={names}），未登录，拒绝写入")
+                    return ("未检测到登录状态——当前 Cookie 只是微博的「游客标识」。\n"
+                            "请先在这个窗口里登录微博账号，登录成功后再点本按钮。")
                 window_state["captured"] = True
-                try:
-                    _win_ref.get("w").destroy()
-                except Exception:
-                    pass
+                # 不再自动关闭窗口！以前自动 destroy() 会让用户还没反应过来窗口
+                # 就消失、也无法确认/再登录。现在把关闭权交还用户：Cookie 已写入
+                # 结果文件，用户自己关闭窗口即可，父进程会据此收尾。
                 _write_result(header)
                 return "ok"
             except Exception as e:
@@ -230,16 +251,19 @@ def _login_child(url: str, result_path: str) -> None:
             _diag("原生抓取超时（10s）")
 
         pairs = []
+        names = set()
         try:
             data = _json.loads(collected["json"]) if collected["json"] else {}
             for c in data.get("cookies", []):
                 n, v = c.get("name", ""), c.get("value", "")
                 if n:
                     pairs.append(f"{n}={v}")
+                    names.add(n)
         except Exception as e:
             _diag(f"解析 CDP JSON 失败: {e!r}")
-        _diag(f"CDP 抓取到 {len(pairs)} 条 cookie")
-        return "; ".join(pairs)
+        _diag(f"CDP 抓取到 {len(pairs)} 条 cookie，names={names}")
+        # 返回 (header, names)：names 供调用方判断是「真登录」还是「游客态」
+        return "; ".join(pairs), names
 
     bridge = _Bridge()
     _win_ref = {}
@@ -262,8 +286,16 @@ def _login_child(url: str, result_path: str) -> None:
     b.onclick = function(){
       b.textContent = '正在获取 Cookie…';
       window.pywebview.api.capture().then(function(res){
-        if (res !== 'ok') { b.textContent = res; b.disabled = false; }
-      }).catch(function(e){ b.textContent = '获取失败：' + e; });
+        if (res === 'ok') {
+          // 已写入 Cookie，主程序会自动收尾关闭本窗口
+          b.textContent = '✅ 已取到，正在返回主程序…';
+        } else {
+          // 未登录 / 游客态：明确弹窗告知，按钮可重试
+          b.textContent = '⚠ 请先登录微博';
+          b.disabled = false;
+          alert(res);
+        }
+      }).catch(function(e){ b.textContent = '获取失败：' + e; b.disabled = false; });
     };
     document.body.appendChild(b);
     window.__wbCookieBtn = true;
@@ -280,10 +312,11 @@ def _login_child(url: str, result_path: str) -> None:
         except Exception as e:
             _diag(f"注入按钮失败: {e!r}")
 
-        # 自动检测：延迟探测登录 cookie（SUB/SUBP）。weibo 登录成功后会跳转
-        # 并种下 HttpOnly 的 SUB/SUBP cookie。我们在后台每隔几秒用 CDP 探测
-        # 一次（CDP 取 cookie 不依赖 COM cast，比 CookieManager 可靠），一旦
-        # 发现 SUB 或 SUBP 就自动抓取并写结果——用户无需知道要点底部按钮。
+        # 自动检测：延迟探测登录 cookie。weibo 登录成功后会跳转并种下 HttpOnly 的
+        # 登录态 cookie。关键判定：真登录一定有 SSOLoginState（游客态只有 SUB/SUBP，
+        # 没有 SSOLoginState）。检测到真登录后**只提示、不自动抓取、不关窗**——
+        # 以前自动抓取+destroy 会让用户还没反应过来窗口就消失，且误把游客态当登录。
+        # 现在把控制权交还用户：看到提示后自己点底部按钮确认，或直接关窗结束。
         def auto_probe():
             import json as _aj
             for attempt in range(60):  # 最多探测 ~2 分钟
@@ -330,11 +363,20 @@ def _login_child(url: str, result_path: str) -> None:
                     data = _aj.loads(box["json"])
                     names = {c.get("name", "") for c in data.get("cookies", [])}
                     _diag(f"自动探测第{attempt+1}次: cookie 名={names}")
-                    if "SUB" in names or "SUBP" in names:
-                        _diag("✅ 自动检测到登录 Cookie（SUB/SUBP），自动抓取")
-                        result = bridge.capture()
-                        _diag(f"自动抓取结果: {result}")
-                        return
+                    # 只有真登录态才提示（游客态有 SUB 但没有 SSOLoginState）
+                    if _is_really_logged_in(names):
+                        _diag("✅ 检测到真登录态（SSOLoginState），提示用户点按钮取 Cookie")
+                        if not window_state.get("_notified"):
+                            window_state["_notified"] = True
+                            try:
+                                w.evaluate_js(
+                                    "var b=document.getElementById('wbCookieBtn');"
+                                    "if(b){b.textContent='✅ 已登录，点此确认取 Cookie';"
+                                    "b.style.background='#1aad19';}"
+                                )
+                            except Exception:
+                                pass
+                        # 不自动 capture、不 destroy——等用户点按钮或关窗
                 except Exception as e:
                     _diag(f"自动探测异常: {e!r}")
 
@@ -490,9 +532,10 @@ def launch_login(parent_root,
         # 2) 子进程已退出但没写出 Cookie → 失败（可能用户直接关窗）
         if proc.poll() is not None:
             on_error(
-                "已关闭登录窗口，未捕获到登录 Cookie。\n"
-                "请重新点击登录，完成登录后再关闭窗口；若窗口打不开，"
-                "请确认已安装 Microsoft Edge WebView2 运行时。")
+                "已关闭登录窗口，但未取到登录 Cookie。\n"
+                "· 若你已登录：请先点窗口底部的绿色按钮「点此确认取 Cookie」，再关闭窗口；\n"
+                "· 若窗口打不开：请确认已安装 Microsoft Edge WebView2 运行时；\n"
+                "· 也可手动方式：浏览器登录微博后按 F12 → 网络 → 复制 Cookie 粘贴进来。")
             _cleanup(result_path, proc)
             return
 

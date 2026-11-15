@@ -185,12 +185,28 @@ class BaseCrawler:
             self._emit({"type": "page_start", "user_id": user_id, "page": page})
             data = self.fetch_page(user_id, page)
             posts = data.get("posts", [])
+            ok = data.get("ok")
             self._sleep()  # 限速：每条请求间隔约 interval 秒
             if not posts:
                 empty_streak += 1
-                if empty_streak >= 2:
-                    reason = "连续两页无新博文，判定到底"
+                # 区分两种"空页"：
+                #   ok == 1 且 cards 为空   → 新浪明确返回成功但无数据，是真到底
+                #   ok != 1 / 解析失败/请求异常 → 多半是限流(418)或反爬，不是到底
+                # 只有"连续多页明确成功且无数据"才判定到底；否则视为限流，
+                # 退避后重试同一页，避免刚抓几条就被误判成"到底"。
+                if ok == 1 and empty_streak >= 3:
+                    reason = f"连续 {empty_streak} 页确认为空（已到底）"
                     break
+                # 限流/异常：退避重试同一页，最多 5 次连续失败后放弃
+                if empty_streak >= 5:
+                    reason = f"连续 {empty_streak} 次请求未取到数据（可能被限流），已停止（断点已保存，可稍后续传）"
+                    break
+                backoff = min(30, 5 * empty_streak)
+                self._emit({"type": "info", "message":
+                            f"第 {page} 页未取到数据（第 {empty_streak} 次，可能限流），"
+                            f"退避 {backoff}s 后重试同一页"})
+                time.sleep(backoff)
+                continue  # 不 page += 1，重试当前页
             else:
                 empty_streak = 0
                 total_new += db.upsert_posts(conn, posts)

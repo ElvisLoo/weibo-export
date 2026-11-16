@@ -266,17 +266,29 @@ def _extract_video_url(raw) -> Optional[str]:
         return None
     mi = pi.get("media_info") or {}
 
-    # 优先 playback_list 里最高清的 mp4（通常最后一个 type=1 的项）
+    # 优先 playback_list：微博/yt-dlp 的标准路径，每项 play_info.url + quality_desc
+    # 选 type=1（mp4）里清晰度最高的（按 quality_desc 比较更可靠，退化为取最后一个）
     best_mp4 = None
+    best_q = -1
     for item in mi.get("playback_list") or []:
         play = item.get("play_info") or {}
-        if play.get("type") == 1 and play.get("url"):
+        if play.get("type") != 1 or not play.get("url"):
+            continue
+        q = play.get("quality") or play.get("quality_desc") or 0
+        try:
+            q = int(q)
+        except (ValueError, TypeError):
+            q = 0
+        if q >= best_q:  # >= 让后面的（通常更高清）覆盖前面的
             best_mp4 = play["url"]
+            best_q = q
     if best_mp4:
         return best_mp4
 
-    # 次选直接 mp4 字段（高清优先）
-    for k in ("mp4_hd_url", "mp4_url", "mp4_1080p_mp4"):
+    # 次选直接 mp4 字段（高清优先）。这些字段名在真实接口里都出现过，
+    # 按清晰度从高到低排列：1080p > 720p > hd > 普通
+    for k in ("mp4_1080p_url", "mp4_1080p_mp4", "mp4_720p_url",
+              "mp4_hd_url", "mp4_url"):
         if mi.get(k):
             return mi[k]
 

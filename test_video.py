@@ -138,20 +138,16 @@ def test_export_html(tmp):
 
 
 def main():
+    import time
     from pathlib import Path as P
-    tmp = P(__file__).parent / "_qa" / "test_video_tmp"
-    import shutil
-    if tmp.exists():
-        shutil.rmtree(tmp, onerror=lambda *a, **k: None)
+    # 每次用带时间戳的新目录，不清理（避开系统保留扫描），人工检查后可手动删
+    tmp = P(__file__).parent / "_qa" / f"test_video_{int(time.time())}"
     tmp.mkdir(parents=True, exist_ok=True)
-    try:
-        test_extract()
-        test_collect()
-        test_download(tmp)
-        test_build_view()
-        test_export_html(tmp)
-    finally:
-        pass  # 留下 _qa/test_video_tmp 供人工检查，不自动删（避开系统保留扫描）
+    test_extract()
+    test_collect()
+    test_download(tmp)
+    test_build_view()
+    test_export_html(tmp)
     print("\n" + "=" * 60)
     print("结果：视频下载功能 5/5 通过 ✅")
     print("=" * 60)

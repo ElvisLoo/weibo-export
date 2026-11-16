@@ -279,7 +279,10 @@ class BaseCrawler:
         user_id = str(user_id).strip()
         self._warmup_session()
 
-        # 找出所有疑似截断的长博文，并记下微博自带的 base62 短 ID（mblogid）
+        # 找出所有疑似截断的长博文。四元组：
+        #   (主微博 mblog_id, 待补全的微博 id, 该微博 mblogid, 补全类型)
+        # 补全类型 "post"   → 主微博自身长文，写入 text/text_raw
+        # 补全类型 "retweet"→ 转发原博长文，写入 raw.retweeted_status（保留用户转发语）
         rows = db.get_posts(conn, user_id)
         targets = []
         for p in rows:
@@ -288,13 +291,25 @@ class BaseCrawler:
                 mb = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
             except Exception:
                 mb = {}
+
+            # 1) 主微博自身是长文
             is_long = mb.get("isLongText") or mb.get("isLong")
             body = (p.get("text") or "") + (p.get("text_raw") or "")
             endswith_full = "全文" in body[-30:]
             if is_long or endswith_full:
-                # 优先用微博返回的 mblogid（base62）；历史数据没有则留空，由
-                # _fetch_longtext 用数字 ID 本地转 base62。二者任一可用即可补全。
-                targets.append((p["mblog_id"], mb.get("mblogid") or ""))
+                targets.append((p["mblog_id"], p["mblog_id"],
+                                mb.get("mblogid") or "", "post"))
+
+            # 2) 转发的原博是长文（别人的长文，转发后主微博 text 只有自己的转发语）
+            rt = mb.get("retweeted_status") or {}
+            if isinstance(rt, dict):
+                rt_is_long = rt.get("isLongText") or rt.get("isLong")
+                rt_body = (rt.get("text") or "") + (rt.get("text_raw") or "")
+                rt_endswith_full = "全文" in rt_body[-30:]
+                if rt_is_long or rt_endswith_full:
+                    rt_mid = str(rt.get("id") or rt.get("mid") or rt.get("idstr") or "")
+                    targets.append((p["mblog_id"], rt_mid,
+                                    rt.get("mblogid") or "", "retweet"))
 
         total = len(targets)
         self._emit({"type": "longtext_progress", "user_id": user_id,
@@ -302,16 +317,23 @@ class BaseCrawler:
                     "message": f"发现 {total} 条待补全长博文"})
 
         filled = 0
-        for i, (mid, mblogid) in enumerate(targets, 1):
+        for i, (owner_mid, target_mid, mblogid, kind) in enumerate(targets, 1):
             if self.stop_flag():
                 break
-            full = self._fetch_longtext(mid, mblogid)
+            # 全文接口用原微博自身的数字 ID（转发时即原博 ID）
+            full = self._fetch_longtext(target_mid, mblogid)
             if full:
-                db.update_post_text(conn, mid, full, full)
-                filled += 1
+                if kind == "retweet":
+                    # 转发原博长文：只改 raw.retweeted_status，保留用户自己的转发语
+                    ok = db.update_retweet_text(conn, owner_mid, target_mid, full, full)
+                else:
+                    # 主微博自身长文：直接改正文两列
+                    ok = db.update_post_text(conn, owner_mid, full, full)
+                if ok:
+                    filled += 1
             self._emit({"type": "longtext_progress", "user_id": user_id,
                         "index": i, "total": total, "filled": filled,
-                        "mblog_id": mid})
+                        "mblog_id": owner_mid})
             time.sleep(1.0)  # 温和限速，避免连续请求触发风控
 
         self._emit({"type": "longtext_done", "user_id": user_id,
@@ -548,6 +570,27 @@ class WeiboCrawler(BaseCrawler):
                     text_raw = full_text
                     self._emit({"type": "longtext_fetched", "mblog_id": mblog_id,
                                 "len": len(full_text)})
+
+            # 转发的原博是长文：列表接口只给截断版，需单独调全文接口补全。
+            # 注意不能覆盖主微博正文（那是用户自己的转发语），只展开 retweeted_status。
+            rt = mb.get("retweeted_status")
+            if isinstance(rt, dict):
+                rt_is_long = (
+                    rt.get("isLongText", False)
+                    or rt.get("isLong", False)
+                    or "全文" in _strip_html(rt.get("text") or "")[-20:]
+                )
+                if rt_is_long:
+                    rt_mid = str(rt.get("id") or rt.get("mid") or rt.get("idstr") or "")
+                    if rt_mid:
+                        rt_full = self._fetch_longtext(rt_mid, rt.get("mblogid") or "")
+                        if rt_full:
+                            rt["text"] = rt_full
+                            rt["text_raw"] = rt_full
+                            self._emit({"type": "longtext_fetched",
+                                        "mblog_id": mblog_id,
+                                        "retweet_of": rt_mid,
+                                        "len": len(rt_full)})
 
             posts.append({
                 "mblog_id": mblog_id,

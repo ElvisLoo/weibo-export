@@ -195,6 +195,50 @@ def update_post_text(conn: sqlite3.Connection, mblog_id: str,
     return cur.rowcount > 0
 
 
+def update_retweet_text(conn: sqlite3.Connection, mblog_id: str,
+                        rt_id: str, new_text: str, new_text_raw: str) -> bool:
+    """只更新某条博文的「转发原博」正文（raw.retweeted_status），用于转发长文补全。
+
+    与 update_post_text 的区别：转发时主微博 text 是用户自己的转发语，不能覆盖；
+    真正被截断的长文在 raw.retweeted_status 里。本函数按原博 ID 定位 rt 节点，
+    仅把它的 text / text_raw 换成全文，其余字段（图片/计数/用户信息）全部保留。
+    返回是否成功更新。
+    """
+    if not mblog_id or not rt_id:
+        return False
+    with _WRITE_LOCK:
+        row = conn.execute(
+            "SELECT raw FROM posts WHERE mblog_id=?", (str(mblog_id),)
+        ).fetchone()
+        if not row or not row[0]:
+            return False
+        try:
+            mb = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        except Exception:
+            return False
+        if not isinstance(mb, dict):
+            return False
+        rt = mb.get("retweeted_status")
+        if not isinstance(rt, dict):
+            return False
+        # 按原博 ID 核对，避免改错（不同数据源 id/idstr/mid/mblogid 形态不一）
+        cur_id = str(rt.get("id") or rt.get("mid") or rt.get("idstr") or "")
+        cur_mb62 = str(rt.get("mblogid") or "")
+        if rt_id not in (cur_id, cur_mb62):
+            return False
+        rt["text"] = new_text
+        rt["text_raw"] = new_text_raw
+        try:
+            conn.execute(
+                "UPDATE posts SET raw=? WHERE mblog_id=?",
+                (json.dumps(mb, ensure_ascii=False), str(mblog_id)),
+            )
+            conn.commit()
+        except Exception:
+            return False
+    return True
+
+
 def get_user(conn: sqlite3.Connection, user_id: str) -> Optional[Dict[str, Any]]:
     row = conn.execute("SELECT * FROM users WHERE user_id=?", (str(user_id),)).fetchone()
     return dict(row) if row else None

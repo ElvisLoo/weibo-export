@@ -64,7 +64,7 @@ class WeiboExporterGUI:
         # 窗口几何（尺寸/位置/居中/自适应屏幕）统一在 main() 里设置，
         # 避免这里硬编码覆盖掉 main() 的自适应逻辑。
         root.title(f"极客港 · 微博导出工具 v{__version__}")
-        root.minsize(800, 600)
+        root.minsize(800, 560)  # 与 main() 的 minsize 保持一致（最终以此生效）
         # 窗口图标（打包后从 _MEIPASS 加载，源码运行从 assets/ 加载）
         self._set_window_icon(root)
 
@@ -682,8 +682,9 @@ def main() -> None:
         _avail_h = 700
 
     _win_w = min(920, _screen_w - 40)
-    # 客户区目标高度 = 屏幕可用高 − 标题栏边框。窗口整体(客户区+标题栏)落在可用高内。
-    _win_h = max(600, _avail_h - 5)
+    # 窗口高度：不再撑满整屏（那样显得笨重）。取固定舒适上限 720px，
+    # 小屏幕（可用高不足 720）时自适应缩小，仍不会压住任务栏。
+    _win_h = min(720, max(600, _avail_h - 5))
     _x = (_screen_w - _win_w) // 2
     _y = max(0, (_screen_h - _win_h - _CHROME) // 2 - 15)
     root.geometry(f"{_win_w}x{_win_h}+{_x}+{_y}")

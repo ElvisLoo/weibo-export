@@ -235,6 +235,119 @@ def _collect_all_pic_urls(posts: List[Dict[str, Any]]) -> List[str]:
     return ordered
 
 
+def _extract_video_url(raw) -> Optional[str]:
+    """从微博 raw（mblog 对象）提取可直接下载的视频 mp4 URL。
+
+    微博 page_info.media_info 字段结构（公开文档常见）：
+      - playback_list: [{play_info: {url: "...mp4", type: 1}}]  新字段，type=1 mp4, type=2 HLS
+      - mp4_hd_url / mp4_url: 旧字段，中等清晰度 mp4
+      - stream_url: HLS (.m3u8)，需 ffmpeg 合并，当前环境无 ffmpeg，跳过
+
+    优先 mp4（避免依赖 ffmpeg）；清晰度取最高（playback_list 末尾通常最高清）。
+    返回 mp4 URL 字符串，或 None（无视频 / 只有 HLS / 非视频微博）。
+    """
+    if not raw:
+        return None
+    try:
+        mb = raw
+        # 兼容双重编码（历史数据 raw 可能被 json.dumps 两次）：最多解析两层
+        for _ in range(2):
+            if isinstance(mb, str):
+                mb = json.loads(mb)
+            else:
+                break
+    except Exception:
+        return None
+    if not isinstance(mb, dict):
+        return None
+
+    pi = mb.get("page_info")
+    if not pi or pi.get("type") != "video":
+        return None
+    mi = pi.get("media_info") or {}
+
+    # 优先 playback_list 里最高清的 mp4（通常最后一个 type=1 的项）
+    best_mp4 = None
+    for item in mi.get("playback_list") or []:
+        play = item.get("play_info") or {}
+        if play.get("type") == 1 and play.get("url"):
+            best_mp4 = play["url"]
+    if best_mp4:
+        return best_mp4
+
+    # 次选直接 mp4 字段（高清优先）
+    for k in ("mp4_hd_url", "mp4_url", "mp4_1080p_mp4"):
+        if mi.get(k):
+            return mi[k]
+
+    # 只有 HLS（.m3u8）：无 ffmpeg 无法本地合并，跳过（导出时回退为远程链接）
+    return None
+
+
+def _collect_all_video_urls(posts: List[Dict[str, Any]]) -> List[str]:
+    """收集全部博文（含转发）的 mp4 视频 URL，去重保序。"""
+    seen = set()
+    ordered: List[str] = []
+    for p in posts:
+        u = _extract_video_url(p.get("raw"))
+        if u and u not in seen:
+            seen.add(u); ordered.append(u)
+        rt = _parse_retweet(p)
+        if rt:
+            rt_raw = p.get("raw")
+            if rt_raw:
+                try:
+                    mb = json.loads(rt_raw) if isinstance(rt_raw, str) else rt_raw
+                    rt_page = (mb.get("retweeted_status") or {}).get("page_info")
+                    if rt_page:
+                        u = _extract_video_url(json.dumps({"page_info": rt_page}, ensure_ascii=False))
+                        if u and u not in seen:
+                            seen.add(u); ordered.append(u)
+                except Exception:
+                    pass
+    return ordered
+
+
+def _download_videos(urls: List[str], media_dir: str,
+                     user_rel: str = _MEDIA_DIR_NAME) -> Dict[str, str]:
+    """把 mp4 视频下载到 media_dir，返回 {远程url: 本地相对路径}。
+
+    视频文件大（几十 MB），顺序下载 + 进度日志，不用并发（避免带宽争抢）。
+    视频服务器一般不防盗链，带普通 UA 即可。
+    """
+    import requests
+    os.makedirs(media_dir, exist_ok=True)
+    mapping: Dict[str, str] = {}
+
+    for u in urls:
+        ext = os.path.splitext(u.split("?")[0])[1].lower()
+        if ext not in (".mp4", ".mov", ".webm"):
+            ext = ".mp4"
+        name = hashlib.md5(u.encode("utf-8")).hexdigest()[:16] + ext
+        dest = os.path.join(media_dir, name)
+
+        if os.path.exists(dest) and os.path.getsize(dest) > 0:
+            mapping[u] = f"{user_rel}/{name}"
+            continue
+
+        try:
+            sess = requests.Session()
+            sess.headers.update({
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)",
+                "Referer": "https://m.weibo.cn/",
+            })
+            r = sess.get(u, timeout=120, stream=True)
+            if r.status_code == 200:
+                with open(dest, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                mapping[u] = f"{user_rel}/{name}"
+        except Exception:
+            pass  # 失败回退为远程链接
+
+    return mapping
+
+
 def export(conn, user_id: str, out_dir: str, fmt: str) -> Dict[str, Any]:
     """导出某用户全部博文为指定格式，返回 {path, count, size, format}。"""
     fmt = fmt.lower().lstrip(".")
@@ -258,17 +371,20 @@ def export(conn, user_id: str, out_dir: str, fmt: str) -> Dict[str, Any]:
     os.makedirs(user_dir, exist_ok=True)
     media_dir = os.path.join(user_dir, _MEDIA_DIR_NAME)  # 用户文件夹内
     url_map: Dict[str, str] = {}
+    video_map: Dict[str, str] = {}
     if fmt in ("html", "md", "txt"):
         # 相对路径相对「文件所在目录 user_dir」，故为 media/xxx
         url_map = _download_media(_collect_all_pic_urls(posts), media_dir,
                                   user_rel=_MEDIA_DIR_NAME)
+        video_map = _download_videos(_collect_all_video_urls(posts), media_dir,
+                                     user_rel=_MEDIA_DIR_NAME)
 
     dispatch = {
         "html": _export_html, "md": _export_md, "pdf": _export_pdf,
         "json": _export_json, "txt": _export_txt,
     }
     path = dispatch[fmt](posts, user, os.path.join(user_dir, f"{base}.{fmt}"),
-                         url_map=url_map)
+                         url_map=url_map, video_map=video_map)
     return {"format": fmt, "path": path, "count": len(posts),
             "size": os.path.getsize(path) if os.path.exists(path) else 0,
             "media_dir": media_dir}
@@ -296,11 +412,13 @@ def export_all(conn, user_id: str, out_dir: str, fmts: Iterable[str],
 
 # ---------------- 视图模型：把博文整理成各格式都好用的结构 ----------------
 
-def _build_view(posts: List[Dict[str, Any]], url_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
-    """为每条博文准备 pic_urls(list)、retweet(dict|None)、text(纯文本)。
+def _build_view(posts: List[Dict[str, Any]], url_map: Optional[Dict[str, str]] = None,
+                video_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    """为每条博文准备 pic_urls(list)、video_urls(list)、retweet(dict|None)、text(纯文本)。
 
     url_map 不为空时（本地已下载图片），把图片 url 替换为本地相对路径
     "media/<用户文件夹>/xxx"，使导出文件离线也能显示图片、不受新浪防盗链影响。
+    video_map 同理，把视频 mp4 url 替换为本地路径。
     图片已按用户分文件夹，避免多用户混杂无法分辨。
     """
     def _resolve(u: str) -> str:
@@ -308,10 +426,17 @@ def _build_view(posts: List[Dict[str, Any]], url_map: Optional[Dict[str, str]] =
             return url_map[u]  # 已是含用户文件夹的相对路径
         return u
 
+    def _resolve_video(u: str) -> str:
+        if video_map and u in video_map:
+            return video_map[u]
+        return u
+
     out = []
     for p in posts:
         d = dict(p)
         d["pic_urls"] = [_resolve(u) for u in _parse_pic_urls(p)]
+        v = _extract_video_url(p.get("raw"))
+        d["video_url"] = _resolve_video(v) if v else None
         rt = _parse_retweet(p)
         if rt:
             rt["pic_urls"] = [_resolve(u) for u in rt["pic_urls"]]
@@ -340,6 +465,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
  .post .src{color:#aaa;font-size:12px;margin-top:4px}
  .pics{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
  .pics img{width:100%;height:auto;border-radius:6px;display:block;cursor:pointer}
+ .videos{margin-top:10px}
+ .videos video{width:100%;max-width:480px;border-radius:6px;display:block;background:#000}
+ .videos .v-note{color:#aaa;font-size:12px;margin-top:4px}
  .retweet{margin-top:10px;background:#f7f8fa;border-left:3px solid #e6162d;
           border-radius:6px;padding:10px 12px;font-size:14px}
  .retweet .rt-head{color:#888;font-size:12px;margin-bottom:6px}
@@ -364,6 +492,11 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   {% if p.pic_urls %}
   <div class="pics">{% for u in p.pic_urls %}<img src="{{ u }}" loading="lazy" alt="微博图片">{% endfor %}</div>
   {% endif %}
+  {% if p.video_url %}
+  <div class="videos">
+    <video src="{{ p.video_url }}" controls preload="metadata" poster="">您的浏览器不支持 video 标签</video>
+  </div>
+  {% endif %}
   {% if p.retweet %}
   <div class="retweet">
     <div class="rt-head">@{{ p.retweet.author }}{% if p.retweet.time %} · {{ p.retweet.time }}{% endif %} 转发自：</div>
@@ -382,9 +515,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def _export_html(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
-                 url_map: Optional[Dict[str, str]] = None) -> str:
+                 url_map: Optional[Dict[str, str]] = None,
+                video_map: Optional[Dict[str, str]] = None) -> str:
     from jinja2 import Template
-    enriched = _build_view(posts, url_map)
+    enriched = _build_view(posts, url_map, video_map)
     for d in enriched:
         d["text_render"] = d["text"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
         if d["retweet"]:
@@ -401,11 +535,12 @@ def _export_html(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 # ---------------- Markdown ----------------
 
 def _export_md(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
-               url_map: Optional[Dict[str, str]] = None) -> str:
+               url_map: Optional[Dict[str, str]] = None,
+               video_map: Optional[Dict[str, str]] = None) -> str:
     lines = [f"# {user.get('screen_name','')} 的微博备份", ""]
     lines.append(f"> 用户ID：{user.get('user_id','')}　微博数：{len(posts)}　导出时间：{time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("")
-    for p in _build_view(posts, url_map):
+    for p in _build_view(posts, url_map, video_map):
         lines.append(f"## {p.get('created_at','')}")
         lines.append("")
         lines.append(p["text"])
@@ -413,6 +548,9 @@ def _export_md(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
         for u in p["pic_urls"]:
             lines.append(f"![微博图片]({u})")
         if p["pic_urls"]:
+            lines.append("")
+        if p.get("video_url"):
+            lines.append(f"[🎬 视频]({p['video_url']})")
             lines.append("")
         if p["retweet"]:
             rt = p["retweet"]
@@ -439,10 +577,11 @@ def _export_md(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 # ---------------- TXT ----------------
 
 def _export_txt(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
-                url_map: Optional[Dict[str, str]] = None) -> str:
+                url_map: Optional[Dict[str, str]] = None,
+                video_map: Optional[Dict[str, str]] = None) -> str:
     lines = [f"{user.get('screen_name','')} 的微博备份", f"用户ID：{user.get('user_id','')}",
              f"微博数：{len(posts)}", "=" * 40, ""]
-    for p in _build_view(posts, url_map):
+    for p in _build_view(posts, url_map, video_map):
         lines.append(f"[{p.get('created_at','')}]")
         lines.append(p["text"])
         for u in p["pic_urls"]:
@@ -465,7 +604,8 @@ def _export_txt(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 # ---------------- JSON ----------------
 
 def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
-                 url_map: Optional[Dict[str, str]] = None) -> str:
+                 url_map: Optional[Dict[str, str]] = None,
+                 video_map: Optional[Dict[str, str]] = None) -> str:
     payload = {
         "brand": "极客港 jikegang.com",
         "tool": "jikegang-weibo-export",
@@ -485,6 +625,7 @@ def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                 "source": p.get("source"),
                 "region_name": p.get("region_name"),
                 "pic_urls": _parse_pic_urls(p),
+                "video_url": _extract_video_url(p.get("raw")),
                 "retweet": _parse_retweet(p),
             }
             for p in posts
@@ -498,7 +639,8 @@ def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 # ---------------- PDF ----------------
 
 def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
-                url_map: Optional[Dict[str, str]] = None) -> str:
+                url_map: Optional[Dict[str, str]] = None,
+                video_map: Optional[Dict[str, str]] = None) -> str:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
@@ -562,7 +704,7 @@ def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
     story = [Paragraph(esc(f"{user.get('screen_name','')} 的微博备份"), h1),
              Paragraph(esc(f"用户ID：{user.get('user_id','')}　微博数：{len(posts)}"), sub),
              Spacer(1, 4)]
-    for p in _build_view(posts, url_map):
+    for p in _build_view(posts, url_map, video_map):
         story.append(Paragraph(esc(p.get("created_at", "")), post_h))
         story.append(Paragraph(esc(p["text"]).replace("\n", "<br/>"), body))
         if p["pic_urls"]:

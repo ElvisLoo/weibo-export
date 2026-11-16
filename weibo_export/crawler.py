@@ -156,17 +156,19 @@ class BaseCrawler:
         raise NotImplementedError
 
     def _fetch_longtext(self, mblog_id: str, mblogid: str = "") -> Optional[str]:
-        """抓取长博文全文（微博列表接口会把超长正文截断，需调 longText 接口补全）。
+        """抓取长博文全文（微博列表接口会把超长正文截断，需再调全文接口补全）。
 
-        关键：接口 ``id`` 参数要的是 base62 短 ID（mblogid，如 RbJqBuAqn），
-        不是数字 ID。优先用微博自己返回的 ``mblogid``；没传则用数字 ID 本地转
-        base62（历史库只有数字 ID 时也能补全）。
+        实测（2026-11，带 Cookie 验证）：m 站可用的全文端点是
+        ``GET /statuses/extend?id=<数字ID>``，返回 data.longTextContent（HTML 片段）。
+        旧的 ``/statuses/longtext?id=<base62>`` 已返回 ``invalid method``（端点废弃），
+        且 base62 ID 在 m 站不可用——这里以数字 ID + extend 为准。
+        extend 拿到的全文是 HTML，需 _strip_html 转纯文本，与列表页 text_raw 口径一致。
 
         成功返回纯文本全文；任何失败（无网/解析失败/无全文）返回 None，
         由调用方回退到截断版正文，绝不因单篇长博文拖垮整页抓取。
         """
-        short_id = mblogid or _mid_to_mblogid(mblog_id)
-        url = f"{BASE_URL}/statuses/longtext?id={short_id}"
+        # extend 接口用数字 ID；mblogid(base62) 仅为兼容保留，不用于 m 站请求
+        url = f"{BASE_URL}/statuses/extend?id={mblog_id}"
         try:
             # 补全全文是"锦上添花"，失败立即回退即可，不重试
             # （否则一页多条长博文持续失败时，25 秒重试会严重拖慢整页抓取）
@@ -175,8 +177,13 @@ class BaseCrawler:
         except Exception:
             return None
         try:
+            if data.get("ok") != 1:
+                return None
             long_data = (data.get("data") or {}).get("longTextContent", "")
-            return long_data or None
+            if not long_data:
+                return None
+            # extend 返回 HTML（含 <br/>、<a> 等），转纯文本
+            return _strip_html(long_data) or None
         except Exception:
             return None
 

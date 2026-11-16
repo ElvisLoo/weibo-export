@@ -63,20 +63,20 @@ LONG_FULL = "这是一条很长很长的博文全文内容，总共好几百字�
 
 
 def test_long_post_fetches_full_text():
-    print("\n[测试1] 长博文 → 调 longText → 全文替换成功")
+    print("\n[测试1] 长博文 → 调 extend 全文接口 → 全文替换成功")
     crawler = make_crawler([
-        resp(200, {"data": {"cards": [{"mblog": dict(LONG_POST)}]}}),  # fetch_page
-        resp(200, {"data": {"longTextContent": LONG_FULL}}),           # longText
+        resp(200, {"data": {"cards": [{"mblog": dict(LONG_POST)}]}}),          # fetch_page
+        resp(200, {"ok": 1, "data": {"longTextContent": LONG_FULL}}),          # extend 全文
     ])
     data = crawler.fetch_page("123", 1)
     post = data["posts"][0]
     assert post["text_raw"] == LONG_FULL, f"text_raw 未被全文替换：{post['text_raw'][:40]}"
-    # 应发起了 longText 请求（session.get 被调 2 次）
+    # 应发起了 extend 全文请求（session.get 被调 2 次）
     assert crawler.session.get.call_count == 2, f"预期调 2 次，实际 {crawler.session.get.call_count}"
     # 应 emit longtext_fetched 事件
     types = [c[0][0].get("type") for c in crawler._emit.call_args_list]
     assert "longtext_fetched" in types, f"未发送 longtext_fetched 事件：{types}"
-    print(f"  ✓ text_raw 已替换为全文（{len(LONG_FULL)} 字），发起 longText 请求")
+    print(f"  ✓ text_raw 已替换为全文（{len(LONG_FULL)} 字），发起 extend 全文请求")
 
 
 def test_long_post_api_fail_falls_back():
@@ -114,7 +114,7 @@ def test_fulltext_suffix_detection():
     post_no_flag = {"id": "300", "text": "<p>长博文内容...<a>全文</a></p>", "text_raw": "长博文内容...全文"}
     crawler = make_crawler([
         resp(200, {"data": {"cards": [{"mblog": post_no_flag}]}}),
-        resp(200, {"data": {"longTextContent": LONG_FULL}}),
+        resp(200, {"ok": 1, "data": {"longTextContent": LONG_FULL}}),  # extend 返回 ok==1
     ])
     data = crawler.fetch_page("123", 1)
     assert data["posts"][0]["text_raw"] == LONG_FULL, "未通过'全文'后缀识别长博文"

@@ -42,6 +42,17 @@ def test_extract():
     assert exporter._extract_video_url(_video_post(2, {"mp4_hd_url": MP4_HD})["raw"]) == MP4_HD
     # 只有 mp4_url
     assert exporter._extract_video_url(_video_post(3, {"mp4_url": MP4})["raw"]) == MP4
+    # CSDN/yt-dlp 确认的真实字段：1080p 优先于 720p
+    mi1080 = {"mp4_1080p_url": MP4, "mp4_720p_url": "lo.mp4", "stream_url": HLS}
+    assert exporter._extract_video_url(_video_post(6, mi1080)["raw"]) == MP4, "应优先 1080p"
+    assert exporter._extract_video_url(_video_post(7, {"mp4_720p_url": MP4})["raw"]) == MP4
+    # playback_list 按 quality 选清晰度最高的 mp4（跳过 HLS）
+    mi_q = {"playback_list": [
+        {"play_info": {"url": "lo.mp4", "type": 1, "quality": 1}},
+        {"play_info": {"url": "mid.m3u8", "type": 2, "quality": 2}},
+        {"play_info": {"url": MP4, "type": 1, "quality": 3}},
+    ]}
+    assert exporter._extract_video_url(_video_post(8, mi_q)["raw"]) == MP4, "应取 quality 最高的 mp4"
     # 只有 HLS → None（无 ffmpeg）
     assert exporter._extract_video_url(_video_post(4, {"stream_url": HLS})["raw"]) is None
     # 非视频

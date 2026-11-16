@@ -19,7 +19,7 @@ import json
 import os
 import re
 import time
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import db
 
@@ -235,6 +235,71 @@ def _collect_all_pic_urls(posts: List[Dict[str, Any]]) -> List[str]:
     return ordered
 
 
+def _extract_pic_live_videos(raw) -> List[Tuple[int, str]]:
+    """识别「实况照片」（Live Photo）里附带的短视频地址。
+
+    Live Photo = 静态图 + 一小段配套视频。微博接口里它可能藏在：
+      - pics 元素的 video_src / videoSrc / play_url / live_photo_url 字段
+      - pic 元素嵌套的 video / play_info 对象里
+    我们没有用户的 Live Photo 真实样例可分析，故用防御性做法：扫描所有
+    常见视频字段名，命中且值是 mp4/m3u8 直链就采集。识别不到则返回空列表，
+    静态图仍正常导出（不影响普通图片）。
+    """
+    if not raw:
+        return []
+    try:
+        mb = raw
+        for _ in range(2):
+            if isinstance(mb, str):
+                mb = json.loads(mb)
+            else:
+                break
+    except Exception:
+        return []
+    if not isinstance(mb, dict):
+        return []
+
+    VIDEO_KEYS = ("video_src", "videoSrc", "play_url", "playUrl",
+                  "live_photo_url", "livePhotoUrl", "mp4_url")
+    out: List[Tuple[int, str]] = []  # [(pics下标, 视频url)]
+
+    def _scan_pic(idx, pic):
+        if not isinstance(pic, dict):
+            return
+        for k in VIDEO_KEYS:
+            v = pic.get(k)
+            if isinstance(v, str) and v.startswith("http"):
+                out.append((idx, v))
+        # 嵌套对象兜底
+        for sub in ("video", "play_info", "media_info"):
+            subv = pic.get(sub)
+            if isinstance(subv, dict):
+                for k in VIDEO_KEYS:
+                    v = subv.get(k)
+                    if isinstance(v, str) and v.startswith("http"):
+                        out.append((idx, v))
+
+    for i, pic in enumerate(mb.get("pics") or []):
+        _scan_pic(i, pic)
+    return out
+
+
+def _collect_all_pic_live_videos(posts: List[Dict[str, Any]]) -> List[Tuple[Any, int, str]]:
+    """收集全部博文（含转发）实况照片的 (博文, 图片下标, 视频url)，去重保序。
+
+    返回 (post_dict, pic_index, video_url) 三元组，便于把实况视频精确
+    绑定到它对应的那张静态图上，而不是笼统追加到博文末尾。
+    """
+    seen = set()
+    ordered: List[Tuple[Any, int, str]] = []
+    for p in posts:
+        for idx, u in _extract_pic_live_videos(p.get("raw")):
+            if u and u not in seen:
+                seen.add(u)
+                ordered.append((p, idx, u))
+    return ordered
+
+
 def _extract_video_url(raw) -> Optional[str]:
     """从微博 raw（mblog 对象）提取可直接下载的视频 mp4 URL。
 
@@ -384,19 +449,32 @@ def export(conn, user_id: str, out_dir: str, fmt: str) -> Dict[str, Any]:
     media_dir = os.path.join(user_dir, _MEDIA_DIR_NAME)  # 用户文件夹内
     url_map: Dict[str, str] = {}
     video_map: Dict[str, str] = {}
+    # LivePhoto 实况视频：{(post_id, pic_index): 本地相对路径}
+    live_video_map: Dict[Tuple[Any, int], str] = {}
     if fmt in ("html", "md", "txt"):
         # 相对路径相对「文件所在目录 user_dir」，故为 media/xxx
         url_map = _download_media(_collect_all_pic_urls(posts), media_dir,
                                   user_rel=_MEDIA_DIR_NAME)
-        video_map = _download_videos(_collect_all_video_urls(posts), media_dir,
-                                     user_rel=_MEDIA_DIR_NAME)
+        # LivePhoto 实况视频并入与 page_info 视频同一套下载/映射：
+        # 先下载到本地拿到 url→本地路径，再按 (博文,图片下标) 记录。
+        live_pairs = _collect_all_pic_live_videos(posts)
+        live_urls = [u for _, _, u in live_pairs]
+        live_dl = _download_videos(live_urls, media_dir, user_rel=_MEDIA_DIR_NAME)
+        video_map.update(live_dl)
+        for p, idx, u in live_pairs:
+            if u in live_dl:
+                live_video_map[(p.get("mblog_id"), idx)] = live_dl[u]
+
+        video_map.update(_download_videos(_collect_all_video_urls(posts), media_dir,
+                                          user_rel=_MEDIA_DIR_NAME))
 
     dispatch = {
         "html": _export_html, "md": _export_md, "pdf": _export_pdf,
         "json": _export_json, "txt": _export_txt,
     }
     path = dispatch[fmt](posts, user, os.path.join(user_dir, f"{base}.{fmt}"),
-                         url_map=url_map, video_map=video_map)
+                         url_map=url_map, video_map=video_map,
+                         live_video_map=live_video_map)
     return {"format": fmt, "path": path, "count": len(posts),
             "size": os.path.getsize(path) if os.path.exists(path) else 0,
             "media_dir": media_dir}
@@ -425,12 +503,15 @@ def export_all(conn, user_id: str, out_dir: str, fmts: Iterable[str],
 # ---------------- 视图模型：把博文整理成各格式都好用的结构 ----------------
 
 def _build_view(posts: List[Dict[str, Any]], url_map: Optional[Dict[str, str]] = None,
-                video_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+                video_map: Optional[Dict[str, str]] = None,
+                live_video_map: Optional[Dict[Tuple[Any, int], str]] = None) -> List[Dict[str, Any]]:
     """为每条博文准备 pic_urls(list)、video_urls(list)、retweet(dict|None)、text(纯文本)。
 
     url_map 不为空时（本地已下载图片），把图片 url 替换为本地相对路径
     "media/<用户文件夹>/xxx"，使导出文件离线也能显示图片、不受新浪防盗链影响。
     video_map 同理，把视频 mp4 url 替换为本地路径。
+    live_video_map：{(mblog_id, 图片下标): 本地路径}，把「实况照片 Live Photo」
+    的配套短视频绑定到它对应的那张静态图上；对应图渲染为可悬停/点击播放的实况图。
     图片已按用户分文件夹，避免多用户混杂无法分辨。
     """
     def _resolve(u: str) -> str:
@@ -446,7 +527,15 @@ def _build_view(posts: List[Dict[str, Any]], url_map: Optional[Dict[str, str]] =
     out = []
     for p in posts:
         d = dict(p)
-        d["pic_urls"] = [_resolve(u) for u in _parse_pic_urls(p)]
+        mid = p.get("mblog_id")
+        # pic_urls 由「字符串列表」升级为「{url, live_video} 对象列表」，
+        # live_video 为该图的实况视频本地路径（无则 None）。兼容各渲染器。
+        pics: List[Dict[str, Optional[str]]] = []
+        for i, u in enumerate(_parse_pic_urls(p)):
+            lv = live_video_map.get((mid, i)) if live_video_map else None
+            pics.append({"url": _resolve(u), "live_video": lv})
+        d["pic_items"] = pics
+        d["pic_urls"] = [it["url"] for it in pics]  # 兼容 md/txt/pdf 旧用法
         v = _extract_video_url(p.get("raw"))
         d["video_url"] = _resolve_video(v) if v else None
         rt = _parse_retweet(p)
@@ -476,7 +565,13 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
  .post .stats{margin-top:10px;color:#888;font-size:12px}
  .post .src{color:#aaa;font-size:12px;margin-top:4px}
  .pics{margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
- .pics img{width:100%;height:auto;border-radius:6px;display:block;cursor:pointer}
+ .pics .pic-item{position:relative;margin:0}
+ .pics .pic-item img{width:100%;height:auto;border-radius:6px;display:block;cursor:pointer}
+ .pics .pic-item video.live{display:none;position:absolute;inset:0;width:100%;height:100%;
+   object-fit:cover;border-radius:6px;pointer-events:none}
+ .pics .pic-item:hover video.live,.pics .pic-item.playing video.live{display:block}
+ .pics .pic-item .live-badge{position:absolute;top:4px;right:4px;background:rgba(0,0,0,.55);
+   color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;pointer-events:none;letter-spacing:.5px}
  .videos{margin-top:10px}
  .videos video{width:100%;max-width:480px;border-radius:6px;display:block;background:#000}
  .videos .v-note{color:#aaa;font-size:12px;margin-top:4px}
@@ -501,8 +596,13 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="post">
   <div class="time">{{ p.created_at }}</div>
   <div class="txt">{{ p.text_render }}</div>
-  {% if p.pic_urls %}
-  <div class="pics">{% for u in p.pic_urls %}<img src="{{ u }}" loading="lazy" alt="微博图片">{% endfor %}</div>
+  {% if p.pic_items %}
+  <div class="pics">{% for it in p.pic_items %}
+    <figure class="pic-item">
+      <img src="{{ it.url }}" loading="lazy" alt="微博图片">
+      {% if it.live_video %}<video class="live" src="{{ it.live_video }}" muted loop playsinline preload="metadata"></video><span class="live-badge" title="实况照片">实况</span>{% endif %}
+    </figure>
+  {% endfor %}</div>
   {% endif %}
   {% if p.video_url %}
   <div class="videos">
@@ -523,14 +623,32 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 </div>
 {% endfor %}
 <footer>由 极客港 (jikegang.com) · jikegang-weibo-export 生成 · 仅限个人备份</footer>
+<script>
+// 实况照片(Live Photo)：点击静态图 → 播放配套视频；再点暂停并回到静态图
+document.addEventListener('click', function (e) {
+  var item = e.target.closest && e.target.closest('.pic-item');
+  if (!item) return;
+  var v = item.querySelector('video.live');
+  if (!v) return;
+  e.preventDefault();
+  if (item.classList.contains('playing')) {
+    v.pause(); v.currentTime = 0;
+    item.classList.remove('playing');
+  } else {
+    v.play().catch(function(){});
+    item.classList.add('playing');
+  }
+});
+</script>
 </body></html>"""
 
 
 def _export_html(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                  url_map: Optional[Dict[str, str]] = None,
-                video_map: Optional[Dict[str, str]] = None) -> str:
+                 video_map: Optional[Dict[str, str]] = None,
+                 live_video_map: Optional[Dict[Tuple[Any, int], str]] = None) -> str:
     from jinja2 import Template
-    enriched = _build_view(posts, url_map, video_map)
+    enriched = _build_view(posts, url_map, video_map, live_video_map)
     for d in enriched:
         d["text_render"] = d["text"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
         if d["retweet"]:
@@ -548,17 +666,20 @@ def _export_html(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 
 def _export_md(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                url_map: Optional[Dict[str, str]] = None,
-               video_map: Optional[Dict[str, str]] = None) -> str:
+               video_map: Optional[Dict[str, str]] = None,
+               live_video_map: Optional[Dict[Tuple[Any, int], str]] = None) -> str:
     lines = [f"# {user.get('screen_name','')} 的微博备份", ""]
     lines.append(f"> 用户ID：{user.get('user_id','')}　微博数：{len(posts)}　导出时间：{time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append("")
-    for p in _build_view(posts, url_map, video_map):
+    for p in _build_view(posts, url_map, video_map, live_video_map):
         lines.append(f"## {p.get('created_at','')}")
         lines.append("")
         lines.append(p["text"])
         lines.append("")
-        for u in p["pic_urls"]:
-            lines.append(f"![微博图片]({u})")
+        for it in p["pic_items"]:
+            lines.append(f"![微博图片]({it['url']})")
+            if it.get("live_video"):
+                lines.append(f"  [📷 实况照片 · 视频]({it['live_video']})")
         if p["pic_urls"]:
             lines.append("")
         if p.get("video_url"):
@@ -590,10 +711,11 @@ def _export_md(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 
 def _export_txt(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                 url_map: Optional[Dict[str, str]] = None,
-                video_map: Optional[Dict[str, str]] = None) -> str:
+                video_map: Optional[Dict[str, str]] = None,
+                live_video_map: Optional[Dict[Tuple[Any, int], str]] = None) -> str:
     lines = [f"{user.get('screen_name','')} 的微博备份", f"用户ID：{user.get('user_id','')}",
              f"微博数：{len(posts)}", "=" * 40, ""]
-    for p in _build_view(posts, url_map, video_map):
+    for p in _build_view(posts, url_map, video_map, live_video_map):
         lines.append(f"[{p.get('created_at','')}]")
         lines.append(p["text"])
         for u in p["pic_urls"]:
@@ -617,7 +739,8 @@ def _export_txt(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 
 def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                  url_map: Optional[Dict[str, str]] = None,
-                 video_map: Optional[Dict[str, str]] = None) -> str:
+                 video_map: Optional[Dict[str, str]] = None,
+                 live_video_map: Optional[Dict[Tuple[Any, int], str]] = None) -> str:
     payload = {
         "brand": "极客港 jikegang.com",
         "tool": "jikegang-weibo-export",
@@ -637,6 +760,10 @@ def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                 "source": p.get("source"),
                 "region_name": p.get("region_name"),
                 "pic_urls": _parse_pic_urls(p),
+                "live_photos": [
+                    {"pic_index": i, "video": lv}
+                    for i, lv in _extract_pic_live_videos(p.get("raw"))
+                ],
                 "video_url": _extract_video_url(p.get("raw")),
                 "retweet": _parse_retweet(p),
             }
@@ -652,7 +779,8 @@ def _export_json(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
 
 def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
                 url_map: Optional[Dict[str, str]] = None,
-                video_map: Optional[Dict[str, str]] = None) -> str:
+                video_map: Optional[Dict[str, str]] = None,
+                live_video_map: Optional[Dict[Tuple[Any, int], str]] = None) -> str:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
@@ -716,7 +844,7 @@ def _export_pdf(posts: List[Dict[str, Any]], user: Dict[str, Any], path: str,
     story = [Paragraph(esc(f"{user.get('screen_name','')} 的微博备份"), h1),
              Paragraph(esc(f"用户ID：{user.get('user_id','')}　微博数：{len(posts)}"), sub),
              Spacer(1, 4)]
-    for p in _build_view(posts, url_map, video_map):
+    for p in _build_view(posts, url_map, video_map, live_video_map):
         story.append(Paragraph(esc(p.get("created_at", "")), post_h))
         story.append(Paragraph(esc(p["text"]).replace("\n", "<br/>"), body))
         if p["pic_urls"]:

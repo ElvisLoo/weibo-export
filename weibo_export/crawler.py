@@ -69,6 +69,34 @@ def _extract_uid_from_url(url: str) -> Optional[str]:
     return None
 
 
+def _mid_to_mblogid(mid: str) -> str:
+    """把微博数字 ID（mid/idstr）转成 base62 短 ID（mblogid）。
+
+    背景：微博长文接口 /statuses/longtext 的 ``id`` 参数要的是 base62 短 ID
+    （如 RbJqBuAqn），而不是数字 ID。列表接口返回的 ``id``/``idstr`` 是数字，
+    ``mblogid`` 才是 base62。用公开的真实样本验证过转换算法
+    （5327962377289859 -> RbJqBuAqn）。历史库里只有数字 ID，补全长文时靠此函数
+    本地换算，无需重新抓取、无需改库结构。
+    微博分段规则：从右起每 7 位一段，各自转 62 进制后拼接。
+    """
+    B62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    mid = str(mid).strip()
+    if not mid.isdigit():
+        return mid  # 已经是 base62 或非数字，原样返回
+    result = ""
+    i = len(mid)
+    while i > 0:
+        seg = mid[max(0, i - 7):i]
+        n = int(seg)
+        s = ""
+        while n > 0:
+            s = B62[n % 62] + s
+            n //= 62
+        result = s + result
+        i -= 7
+    return result or mid
+
+
 def _parse_uid_input(raw: str):
     """解析用户输入框内容，供 UI 使用。
 
@@ -127,13 +155,18 @@ class BaseCrawler:
     def get_user(self, user_id: str) -> Dict[str, Any]:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def _fetch_longtext(self, mblog_id: str) -> Optional[str]:
+    def _fetch_longtext(self, mblog_id: str, mblogid: str = "") -> Optional[str]:
         """抓取长博文全文（微博列表接口会把超长正文截断，需调 longText 接口补全）。
+
+        关键：接口 ``id`` 参数要的是 base62 短 ID（mblogid，如 RbJqBuAqn），
+        不是数字 ID。优先用微博自己返回的 ``mblogid``；没传则用数字 ID 本地转
+        base62（历史库只有数字 ID 时也能补全）。
 
         成功返回纯文本全文；任何失败（无网/解析失败/无全文）返回 None，
         由调用方回退到截断版正文，绝不因单篇长博文拖垮整页抓取。
         """
-        url = f"{BASE_URL}/statuses/longtext?id={mblog_id}"
+        short_id = mblogid or _mid_to_mblogid(mblog_id)
+        url = f"{BASE_URL}/statuses/longtext?id={short_id}"
         try:
             # 补全全文是"锦上添花"，失败立即回退即可，不重试
             # （否则一页多条长博文持续失败时，25 秒重试会严重拖慢整页抓取）
@@ -239,7 +272,7 @@ class BaseCrawler:
         user_id = str(user_id).strip()
         self._warmup_session()
 
-        # 找出所有疑似截断的长博文
+        # 找出所有疑似截断的长博文，并记下微博自带的 base62 短 ID（mblogid）
         rows = db.get_posts(conn, user_id)
         targets = []
         for p in rows:
@@ -252,7 +285,9 @@ class BaseCrawler:
             body = (p.get("text") or "") + (p.get("text_raw") or "")
             endswith_full = "全文" in body[-30:]
             if is_long or endswith_full:
-                targets.append(p["mblog_id"])
+                # 优先用微博返回的 mblogid（base62）；历史数据没有则留空，由
+                # _fetch_longtext 用数字 ID 本地转 base62。二者任一可用即可补全。
+                targets.append((p["mblog_id"], mb.get("mblogid") or ""))
 
         total = len(targets)
         self._emit({"type": "longtext_progress", "user_id": user_id,
@@ -260,10 +295,10 @@ class BaseCrawler:
                     "message": f"发现 {total} 条待补全长博文"})
 
         filled = 0
-        for i, mid in enumerate(targets, 1):
+        for i, (mid, mblogid) in enumerate(targets, 1):
             if self.stop_flag():
                 break
-            full = self._fetch_longtext(mid)
+            full = self._fetch_longtext(mid, mblogid)
             if full:
                 db.update_post_text(conn, mid, full, full)
                 filled += 1

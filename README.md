@@ -5,12 +5,12 @@
   英文名：<code>jikegang-weibo-export</code>
 </div>
 
-一个**新浪微博博文导出工具**的「核心引擎 + 可复用本地界面」。
+一个**新浪微博博文导出工具**的「核心引擎 + 桌面界面 + 本地网页界面」。
 
-- 核心抓取与导出逻辑**全部在 Python 后端**，前端通过 HTTP 调用 → 未来网页版复用同一引擎。
+- 核心抓取与导出逻辑**全部在 Python 后端**，界面通过 HTTP 调用后端引擎。
 - 本期跑通：**填写 Cookie → 抓取自己/指定用户博文 → 导出 HTML / Markdown / PDF / JSON / TXT**。
-- 桌面端用 **Electron 壳**包一层（打开本地界面）；本期以「本地 Web 界面 + 后端」为主并完成自测，
-  Electron 打包脚本已就绪但不在本期强求出安装包（中国大陆网络下 electron-builder 拉二进制常超时）。
+- **桌面端**：Windows 原生 GUI（tkinter），打包为绿色单目录版，解压即用，发布到 GitHub Releases。
+- **本地网页版**：FastAPI + 单文件 HTML，`python run.py` 启动后浏览器访问 `127.0.0.1:8765`。
 
 ---
 
@@ -18,22 +18,26 @@
 
 ```
 weibo-export/
-├── weibo_export/          # Python 后端引擎（可复用）
+├── weibo_export/          # Python 后端引擎（核心，可复用）
 │   ├── __init__.py
 │   ├── crawler.py         # 抓取：限速、断点续传、Cookie 鉴权、进度回调
 │   ├── mock_crawler.py    # 模拟抓取器（自测导出链路，不触网）
 │   ├── db.py              # SQLite 读写（weibo.db）
 │   ├── exporter.py        # 导出 HTML / MD / PDF / JSON / TXT
+│   ├── paths.py           # 运行时资源与数据目录定位
 │   ├── server.py          # FastAPI 路由 + serve 前端（python -m weibo_export.server）
 │   └── static/
-│       └── index.html     # 单文件前端界面（内联 CSS + 原生 JS）
-├── electron/              # Electron 桌面壳
-│   ├── main.js            # 启动后端子进程 + 打开窗口
-│   ├── preload.js
-│   └── package.json       # electron-builder 打包配置
-├── exports/               # 导出文件输出目录
+│       └── index.html     # 单文件网页前端（内联 CSS + 原生 JS）
+├── desktop_app.py         # 桌面端 GUI（tkinter 原生，打包为 Windows 绿色版）
+├── deploy/                # 部署配置包（域名/服务器等敏感信息均为占位符）
+│   ├── deploy.sh          # 一键部署脚本（装依赖→venv→systemd→Nginx→防火墙）
+│   ├── weibo-export.service  # systemd 服务单元（开机自启）
+│   ├── nginx-reverse-proxy.conf  # Nginx 反代配置（CDN/EO 兼容）
+│   ├── .env.production    # 生产环境参数
+│   └── README.md          # 部署说明
+├── release-notes/         # 各版本更新说明
 ├── requirements.txt
-├── run.py                 # 一键启动入口
+├── run.py                 # 本地网页版一键启动入口
 └── README.md
 ```
 
@@ -56,6 +60,13 @@ PDF 中文字体优先使用 Windows 系统字体 `msyh.ttc`（微软雅黑）/ 
 
 ## 三、启动
 
+### 桌面版（推荐普通用户）
+
+从 [GitHub Releases](https://github.com/ElvisLoo/weibo-export/releases/latest) 下载最新版 `weibo-export-vX.X.X-win64.zip`，
+解压后双击 `极客港微博导出/极客港微博导出.exe` 即可，无需安装 Python。
+
+### 本地网页版（开发者 / 想跑源码）
+
 两种等价方式（在项目根 `weibo-export/` 下）：
 
 ```bash
@@ -68,13 +79,10 @@ python -m weibo_export.server
 
 可选参数：`--host`（默认 127.0.0.1，仅本机访问）、`--port`（默认 8765）、`--db`、`--export-dir`。
 
-桌面版（Electron）：
+### 服务器部署
 
-```bash
-cd electron
-npm install        # 安装 electron
-npm start          # 自动拉起后端 + 打开窗口
-```
+`deploy/` 目录提供完整的部署配置（systemd + Nginx），域名/服务器等敏感信息已用占位符替换，
+部署时替换为真实值即可。详见 `deploy/README.md`。
 
 ---
 
@@ -240,7 +248,7 @@ print(exporter.export_all(db.connect('weibo.db'),'123456789','exports',['html','
 - 后端引擎：**Python**，`requests` 抓取，`SQLite`(weibo.db) 存储，
   `Jinja2` 生成 HTML，Markdown 纯文本拼接，PDF 用 `reportlab`（注册 Windows 中文字体）。
 - 桌面版：**Tkinter 原生 GUI**（Python 标准库，无 WebView2/浏览器依赖，Win10/11 开箱即用）。
-- 网页版（规划中）：复用同一套后端引擎 + FastAPI 本地服务 + 单文件 HTML 前端，未来部署到 `jikegang.com`。
+- 本地网页版：复用同一套后端引擎 + FastAPI 本地服务（`python run.py`）+ 单文件 HTML 前端。
 
 ---
 

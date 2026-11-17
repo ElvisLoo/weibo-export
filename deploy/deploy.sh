@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 极客港 · 微博导出 —— 阿里云 ECS 一键部署脚本
+# 极客港 · 微博导出 —— 云服务器 ECS 一键部署脚本
 # 用法：
 #   chmod +x deploy.sh
 #   sudo ./deploy.sh
@@ -28,7 +28,7 @@ info() { echo -e "${BLUE}[i]${NC} $*"; }
 PROJECT_DIR="/opt/weibo-export"
 SERVICE_USER="www-data"
 SERVICE_NAME="weibo-export"
-NGINX_CONF="wb.jikegang.com"
+NGINX_CONF="your-subdomain.example.com"
 PYTHON_VERSION="3.10"
 
 info "=========================================="
@@ -193,14 +193,14 @@ fi
 # =============================================================
 # 10. 输出部署信息
 # =============================================================
-ECS_IP=$(curl -s ifconfig.me || echo "未知")
+SERVER_IP=$(curl -s your-ip-lookup-service || echo "未知")
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN} 部署完成！${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo -e "${BLUE}本地访问：${NC}http://127.0.0.1:8765"
-echo -e "${BLUE}公网访问：${NC}http://${ECS_IP}（需配 EO CNAME 后用 wb.jikegang.com）"
+echo -e "${BLUE}公网访问：${NC}http://${SERVER_IP}（需配 EO CNAME 后用 your-subdomain.example.com）"
 echo ""
 echo -e "${BLUE}服务管理：${NC}"
 echo "  sudo systemctl status  ${SERVICE_NAME}"
@@ -213,13 +213,13 @@ echo "  数据库：${DATA_DIR}/weibo.db"
 echo "  导出：  ${EXPORT_DIR}/"
 echo ""
 echo -e "${YELLOW}下一步：${NC}"
-echo "  1. 在腾讯云 EO 添加站点 wb.jikegang.com"
-echo "     回源 IP：${ECS_IP}"
+echo "  1. 在腾讯云 EO 添加站点 your-subdomain.example.com"
+echo "     回源 IP：${SERVER_IP}"
 echo "     回源端口：80"
-echo "  2. 在域名 DNS 添加 CNAME：wb.jikegang.com → <EO分配的CNAME>"
+echo "  2. 在域名 DNS 添加 CNAME：your-subdomain.example.com → <EO分配的CNAME>"
 echo "  3. 在 EO 配置缓存规则："
 echo "     /api/* → 不缓存（关键！）"
 echo "     /files/* → 可缓存 1 小时"
 echo "     /static/* → 可缓存 1 小时"
-echo "  4. 访问 https://wb.jikegang.com 测试"
+echo "  4. 访问 https://your-subdomain.example.com 测试"
 echo ""

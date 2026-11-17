@@ -1,7 +1,7 @@
 [Unit]
-Description=jikegang-weibo-export FastAPI Service
+Description=weibo-export FastAPI Service
 After=network.target
-Documentation=https://github.com/你的仓库/jikegang-weibo-export
+Documentation=https://github.com/你的仓库/weibo-export
 
 [Service]
 Type=simple

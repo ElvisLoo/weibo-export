@@ -1,6 +1,6 @@
-# 极客港 · 微博导出 —— 阿里云 ECS 部署包
+# 极客港 · 微博导出 —— 云服务器 ECS 部署包
 
-把 **wb.jikegang.com** 跑在阿里云 ECS 上，前面用 **腾讯云 EdgeOne（EO）** 接入并隐藏源站 IP。
+把 **your-subdomain.example.com** 跑在云服务器 ECS 上，前面用 **腾讯云 EdgeOne（EO）** 接入并隐藏源站 IP。
 
 ---
 
@@ -15,22 +15,22 @@
 
 ---
 
-## 二、部署步骤（在阿里云 ECS 上执行）
+## 二、部署步骤（在云服务器 ECS 上执行）
 
 > 假设 ECS 是 **Ubuntu 20.04/22.04/24.04**，已放行安全组 `22`(SSH)、`80`(HTTP)、`443`(HTTPS)。
 
 ### 1. 上传项目
 ```bash
 # 在本地（你的 Windows 开发机）打包并上传
-scp -r C:/Users/Admin/RaccoonWork/weibo-export root@<ECS_IP>:/opt/weibo-export
-scp -r C:/Users/Admin/RaccoonWork/weibo-export/deploy root@<ECS_IP>:/opt/weibo-export/deploy
+scp -r C:/Users/Admin/RaccoonWork/weibo-export root@<SERVER_IP>:/opt/weibo-export
+scp -r C:/Users/Admin/RaccoonWork/weibo-export/deploy root@<SERVER_IP>:/opt/weibo-export/deploy
 
 # 或者只传关键文件（跳过 .git / *.zip / build 日志）
 ```
 
 ### 2. SSH 登录 ECS 并执行部署
 ```bash
-ssh root@<ECS_IP>
+ssh root@<SERVER_IP>
 cd /opt/weibo-export/deploy
 chmod +x deploy.sh
 sudo ./deploy.sh
@@ -58,7 +58,7 @@ EO 不只是缓存，它是 **CDN + WAF + DDoS 防护 + 隐藏源站 IP** 的组
 ### 回源配置
 - 回源协议：HTTP（Nginx 监听 80）
 - 回源端口：`80`
-- 回源 Host：`wb.jikegang.com`
+- 回源 Host：`your-subdomain.example.com`
 - **回源 IP**：填你的 ECS 公网 IP
 
 ### 安全策略（可选但推荐）
@@ -70,7 +70,7 @@ EO 不只是缓存，它是 **CDN + WAF + DDoS 防护 + 隐藏源站 IP** 的组
 ### DNS
 在域名服务商处加 CNAME 记录：
 ```
-wb.jikegang.com  CNAME  <EO分配的CNAME>.eo.dnse2.com
+your-subdomain.example.com  CNAME  <EO分配的CNAME>.eo.dnse2.com
 ```
 
 ---
@@ -131,7 +131,7 @@ wb.jikegang.com  CNAME  <EO分配的CNAME>.eo.dnse2.com
 
 ## 七、下一步（部署后）
 
-1. 访问 `https://wb.jikegang.com`，填 Cookie 抓自己的微博
+1. 访问 `https://your-subdomain.example.com`，填 Cookie 抓自己的微博
 2. 测试导出 HTML/MD/PDF/JSON/TXT
 3. 确认数据落盘位置 `~/微博导出/`
 4. 如需**公网多用户**，考虑加：

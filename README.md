@@ -84,6 +84,10 @@ python -m weibo_export.server
 `deploy/` 目录提供完整的部署配置（systemd + Nginx），域名/服务器等敏感信息已用占位符替换，
 部署时替换为真实值即可。详见 `deploy/README.md`。
 
+> **自定义导出目录**：服务器部署时可通过环境变量 `EXPORT_DIR` 指定导出路径
+> （如宝塔常见路径 `/www/wwwroot/weibo-export/微博导出`），无需去找 `~` 家目录。
+> 路径不可写时会安全回退到默认逻辑。桌面端默认走 `D:\微博导出`（无 D 盘回退到文档目录）。
+
 ---
 
 ## 四、怎么填 Cookie（推荐登录态抓全量）

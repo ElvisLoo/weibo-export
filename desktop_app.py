@@ -234,7 +234,7 @@ class WeiboExporterGUI:
                   font=self.font_hint, foreground="gray").pack(side="left")
 
         row += 1  # row=2：Cookie 多行文本框（独占一行，避免与最大页数冲突）
-        self.cookie_text = tk.Text(frm_input, height=1, wrap="none",
+        self.cookie_text = tk.Text(frm_input, height=3, wrap="none",
                                    font=self.font_label, relief="solid", borderwidth=1)
         self.cookie_text.grid(row=row, column=2, sticky="we", pady=3)
         ttk.Label(frm_input, text="也可粘贴网页 Cookie\n不填仅抓公开博文", font=self.font_hint,
@@ -318,11 +318,10 @@ class WeiboExporterGUI:
                                             length=200, maximum=100, value=0)
         self.progress_bar.pack(fill="x", pady=(0, 4))
 
-        # 黑色日志框：它是唯一 expand=True 的可伸缩控件。当「其余固定内容总高」已
-        # 等于/超过窗口客户区（约 685px）时，Tkinter 会把它压到只剩一条（实测 23px）。
-        # 把请求高度降到 3 行：内容总需求降到窗口高度以内，日志框就有余量正常显示，
-        # 窗口更高时它仍随 expand 撑满剩余空间。
-        self.log_text = ScrolledText(frm_progress, height=3, state="disabled",
+        # 黑色日志框：它是唯一 expand=True 的可伸缩控件。宽度随窗口铺满，
+        # 高度请求 8 行（之前压到 3 行显得太扁）。窗口高 720px 下其余固定内容
+        # 不至于挤满客户区，日志框能保有充足的初始高度并随 expand 撑满剩余空间。
+        self.log_text = ScrolledText(frm_progress, height=8, state="disabled",
                                      font=self.font_log, bg="#1e1e1e", fg="#d4d4d4")
         self.log_text.pack(fill="both", expand=True, pady=(4, 0))
 
@@ -681,7 +680,7 @@ def main() -> None:
     except Exception:
         _avail_h = 700
 
-    _win_w = min(920, _screen_w - 40)
+    _win_w = min(840, _screen_w - 40)
     # 窗口高度：不再撑满整屏（那样显得笨重）。取固定舒适上限 720px，
     # 小屏幕（可用高不足 720）时自适应缩小，仍不会压住任务栏。
     _win_h = min(720, max(600, _avail_h - 5))

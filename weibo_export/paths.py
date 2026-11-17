@@ -96,7 +96,35 @@ def default_db_path() -> str:
 
 
 def default_export_dir() -> str:
-    """导出目录：<当前用户>/文档/微博导出（按用户要求）。"""
-    d = os.path.join(_documents_dir(), "微博导出")
-    os.makedirs(d, exist_ok=True)
-    return d
+    """导出目录优先级：
+    1. 环境变量 EXPORT_DIR（服务器部署用，如 /www/wwwroot/weibo-export/微博导出）
+    2. Windows D 盘根目录 微博导出（用户明确要求）
+    3. Windows 回退 ~/Documents/微博导出
+    4. Linux 默认 ~/微博导出
+    """
+    # 优先级 1：环境变量（服务器 / systemd / Docker 场景）
+    env_dir = os.environ.get("EXPORT_DIR", "").strip()
+    if env_dir:
+        try:
+            os.makedirs(env_dir, exist_ok=True)
+            return env_dir
+        except (OSError, PermissionError):
+            pass  # 环境变量路径不可写时回退到默认逻辑，避免服务启动失败
+
+    # 优先级 2-3：Windows 默认逻辑
+    if os.name == "nt":
+        d_path = "D:\\微博导出"
+        try:
+            if os.path.exists("D:\\") or os.access("D:\\", os.W_OK):
+                os.makedirs(d_path, exist_ok=True)
+                return d_path
+        except (OSError, PermissionError):
+            pass
+        fallback = os.path.join(_documents_dir(), "微博导出")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+    # 优先级 4：Linux / macOS 默认
+    fallback = os.path.join(os.path.expanduser("~"), "微博导出")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback

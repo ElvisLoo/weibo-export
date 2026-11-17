@@ -158,6 +158,10 @@ def _run_crawl_thread(req: CrawlReq) -> None:
 
 @app.post("/api/crawl")
 def crawl(req: CrawlReq):
+    # 支持粘贴完整微博主页链接（weibo.com/u/…、m.weibo.cn/u/…等），自动解析为纯数字 ID
+    from .crawler import _parse_uid_input
+    normalized_uid, _is_custom = _parse_uid_input(req.user_id.strip())
+    req.user_id = normalized_uid
     with _STATE["job_lock"]:
         if _STATE["job"] and _STATE["job"].get("status") == "running":
             raise HTTPException(409, "已有抓取任务在进行中")
@@ -167,7 +171,7 @@ def crawl(req: CrawlReq):
             "user_id": req.user_id, "logged_in": bool(req.cookie.strip()),
             "interval": req.interval, "current_page": 0, "pages_done": 0,
             "total_in_db": 0, "started_at": time.time(), "updated_at": time.time(),
-            "last_event": "任务已启动",
+            "last_event": f"任务已启动 · 已解析用户 ID：{req.user_id}",
         }
     # 注入 stop 检查：通过 monkeypatch crawler 主循环太重，这里用轮询线程设 stop_flag
     threading.Thread(target=_run_crawl_thread, args=(req,), daemon=True).start()

@@ -1,0 +1,53 @@
+[Unit]
+Description=jikegang-weibo-export FastAPI Service
+After=network.target
+Documentation=https://github.com/你的仓库/jikegang-weibo-export
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/weibo-export
+EnvironmentFile=/opt/weibo-export/deploy/.env.production
+
+# 加载 Python venv
+Environment="PATH=/opt/weibo-export/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# 启动命令（uvicorn 直接运行 FastAPI app）
+ExecStart=/opt/weibo-export/.venv/bin/uvicorn weibo_export.server:app \
+    --host ${HOST} \
+    --port ${PORT} \
+    --workers ${WORKERS} \
+    --log-level ${LOG_LEVEL} \
+    --timeout-keep-alive 75 \
+    --timeout-graceful-shutdown 30
+
+# 优雅停止（尊重抓取任务限速）
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# 自动重启
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 安全加固（可选，按需开启）
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/weibo-export /home/www-data
+PrivateTmp=true
+
+# 资源限制（防止单任务吃满服务器）
+LimitNOFILE=65535
+MemoryMax=1G
+CPUQuota=100%
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=weibo-export
+
+[Install]
+WantedBy=multi-user.target

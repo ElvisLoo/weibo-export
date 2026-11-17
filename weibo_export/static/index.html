@@ -38,6 +38,10 @@ button.warn{background:var(--warn)}
 #statusBar.ok{border-color:#bbf7d0;background:#f0fdf4}
 #statusBar.warn{border-color:#fde68a;background:#fffbeb}
 #statusBar.err{border-color:#fecaca;background:#fef2f2}
+#statusLog{margin-top:8px;max-height:180px;min-height:96px;overflow-y:auto;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-family:Consolas,"Courier New",monospace;font-size:12px;line-height:1.7;display:none}
+#statusLog.show{display:block}
+#statusLog div{white-space:pre-wrap;word-break:break-all}
+#statusLog .t{color:#64748b;margin-right:6px}
 .prog{height:8px;background:#eee;border-radius:6px;overflow:hidden;margin-top:10px;display:none}
 .prog.show{display:block}
 .prog>div{height:100%;background:linear-gradient(90deg,var(--brand),var(--brand2));width:0;transition:width .4s}
@@ -90,9 +94,9 @@ footer{text-align:center;color:#aaa;font-size:12px;padding:24px}
     <h2>② 抓取博文</h2>
     <div class="row">
       <div>
-        <label>用户 ID（纯数字）</label>
-        <input type="text" id="userId" placeholder="例如 123456789">
-        <div class="hint">在 m.weibo.cn 打开对方主页，地址栏 /u/ 后面的数字即用户 ID</div>
+        <label>用户 ID 或主页链接</label>
+        <input type="text" id="userId" placeholder="例如 123456789 或粘贴 weibo.com/u/123456789">
+        <div class="hint">支持纯数字 ID 或粘贴微博主页链接（weibo.com/u/…、m.weibo.cn/u/…），自动识别</div>
       </div>
       <div>
         <label>抓取模式</label>
@@ -124,6 +128,7 @@ footer{text-align:center;color:#aaa;font-size:12px;padding:24px}
       <button id="btnSeed" class="ghost" title="直接往数据库灌一批模拟博文，用于测试导出">灌入模拟数据(自测)</button>
     </div>
     <div id="statusBar"></div>
+    <div id="statusLog"></div>
     <div class="prog" id="prog"><div></div></div>
   </div>
 
@@ -166,6 +171,19 @@ function setBar(msg,cls){
   const b=$('#statusBar');b.className='show '+(cls||'');b.innerHTML=msg;
 }
 function setProg(p){const el=$('#prog');el.className='prog'+(p>=0?' show':'');el.firstElementChild.style.width=Math.max(0,Math.min(100,p))+'%';}
+
+// 滚动日志区：抓取过程中逐行追加事件，最多保留 200 行，自动滚到底部
+function logLine(msg){
+  const box=$('#statusLog');
+  box.className='show';
+  const t=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  const line=document.createElement('div');
+  line.innerHTML=`<span class="t">[${t}]</span>${msg}`;
+  box.appendChild(line);
+  while(box.children.length>200)box.removeChild(box.firstChild);
+  box.scrollTop=box.scrollHeight;
+}
+function clearLog(){const box=$('#statusLog');box.innerHTML='';box.className='';}
 
 async function loadStatus(){
   try{
@@ -211,6 +229,8 @@ async function startCrawl(){
   if(req.crawler==='weibo'&&!req.cookie){setBar('⚠️ 未填 Cookie，将以「未登录公开抓取」降级模式运行，可能只能抓到部分公开博文','warn');}
   $('#btnStart').disabled=true;$('#btnStop').disabled=false;setProg(0);
   setBar('任务启动中…','');
+  clearLog();
+  logLine('任务已提交，等待后端响应…');
   try{
     const r=await fetch(API+'/api/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)});
     const d=await r.json();if(!r.ok)throw new Error(d.detail||'启动失败');
@@ -224,14 +244,19 @@ async function pollJob(){
     if(!job)return;
     const pct=job.total_in_db?Math.min(100,(job.pages_done/(job.pages_done+2))*100):0;
     let html=`<b>${job.phase}</b> · 模式：${job.crawler}${job.logged_in?'(已登录)':'(未登录)'} · 当前第 ${job.current_page} 页 · 已抓 ${job.pages_done} 页 · 库内 ${job.total_in_db} 条<br><span style="color:var(--muted)">${job.last_event||''}</span>`;
+    // 把最新事件记入日志区（去重：和上一行一样就跳过）
+    const box=$('#statusLog');
+    const lastLine=box.lastElementChild;
+    const evt=job.last_event||'';
+    if(evt&&(!lastLine||!lastLine.textContent.includes(evt)))logLine(evt);
     const cls=job.status==='error'?'err':(job.status==='done'?'ok':'');
     setBar(html,cls);
     if(job.status==='running'){setProg(pct);}
     else{
       setProg(-1);clearInterval(pollTimer);pollTimer=null;
       $('#btnStart').disabled=false;$('#btnStop').disabled=true;
-      if(job.status==='error')setBar('❌ 出错：'+(job.error||''),  'err');
-      else setBar(`✅ 完成：入库 ${job.total_posts} 条（${job.stopped_reason||''}）`,'ok');
+      if(job.status==='error'){setBar('❌ 出错：'+(job.error||''),'err');logLine('❌ 出错：'+(job.error||''));}
+      else{setBar(`✅ 完成：入库 ${job.total_posts} 条（${job.stopped_reason||''}）`,'ok');logLine(`✅ 完成：入库 ${job.total_posts} 条`);}
       refreshUsers();
     }
   }catch(e){}

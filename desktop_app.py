@@ -318,9 +318,8 @@ class WeiboExporterGUI:
                                             length=200, maximum=100, value=0)
         self.progress_bar.pack(fill="x", pady=(0, 4))
 
-        # 黑色日志框：宽度随窗口铺满，高度请求 12 行。窗口高 720px 下其余
-        # 固定内容不至于挤满客户区，日志框保有充足初始高度并随 expand 撑满剩余。
-        self.log_text = ScrolledText(frm_progress, height=12, state="disabled",
+        # 黑色日志框：宽度随窗口铺满，高度请求 16 行（v1.3.20 为 12，用户反馈再加高多显示几行）。
+        self.log_text = ScrolledText(frm_progress, height=16, state="disabled",
                                      font=self.font_log, bg="#1e1e1e", fg="#d4d4d4")
         self.log_text.pack(fill="both", expand=True, pady=(4, 0))
 
@@ -680,9 +679,9 @@ def main() -> None:
         _avail_h = 700
 
     _win_w = min(840, _screen_w - 40)
-    # 窗口高度：不再撑满整屏（那样显得笨重）。取固定舒适上限 720px，
-    # 小屏幕（可用高不足 720）时自适应缩小，仍不会压住任务栏。
-    _win_h = min(720, max(600, _avail_h - 5))
+    # 窗口高度：不再撑满整屏（那样显得笨重）。取固定舒适上限 800px（v1.3.21：从 720 加高以给日志框更多行），
+    # 小屏幕（可用高不足 800）时自适应缩小，仍不会压住任务栏。
+    _win_h = min(800, max(600, _avail_h - 5))
     _x = (_screen_w - _win_w) // 2
     _y = max(0, (_screen_h - _win_h - _CHROME) // 2 - 15)
     root.geometry(f"{_win_w}x{_win_h}+{_x}+{_y}")

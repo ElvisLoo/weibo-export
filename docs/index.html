@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>极客港 · 微博导出工具 — 把你的微博完整备份到本地</title>
 <meta name="description" content="极客港微博导出工具：一键备份你的新浪微博，支持 HTML / Markdown / PDF / JSON / TXT 五种格式，图片离线保存，数据只存本机，安全可控。">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="icon" type="image/png" href="icon.png">
 <style>
 :root{
   --wb-red:#e6162d; --wb-red-dark:#c1121f;
@@ -29,8 +31,7 @@ nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);
     backdrop-filter:saturate(180%) blur(10px);border-bottom:1px solid var(--line)}
 nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px}
-.brand .dot{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#ff6b6b,#e6162d);
-            display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px}
+.brand .logo{width:32px;height:32px;border-radius:8px;display:block;object-fit:contain}
 .nav-links{display:flex;gap:26px;font-size:14.5px;color:var(--ink-2)}
 .nav-links a{color:var(--ink-2)}
 .nav-links a:hover{color:var(--wb-red);text-decoration:none}
@@ -59,7 +60,7 @@ h1 .hl{color:var(--wb-red)}
 <body>
 <nav>
   <div class="wrap">
-    <div class="brand"><span class="dot">眼</span>极客港 · 微博导出</div>
+    <div class="brand"><img class="logo" src="icon.png" alt="极客港 · 微博导出">极客港 · 微博导出</div>
     <div class="nav-links">
       <a href="#features">功能</a>
       <a href="#how">使用</a>

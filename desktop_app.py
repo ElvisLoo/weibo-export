@@ -318,10 +318,9 @@ class WeiboExporterGUI:
                                             length=200, maximum=100, value=0)
         self.progress_bar.pack(fill="x", pady=(0, 4))
 
-        # 黑色日志框：它是唯一 expand=True 的可伸缩控件。宽度随窗口铺满，
-        # 高度请求 8 行（之前压到 3 行显得太扁）。窗口高 720px 下其余固定内容
-        # 不至于挤满客户区，日志框能保有充足的初始高度并随 expand 撑满剩余空间。
-        self.log_text = ScrolledText(frm_progress, height=8, state="disabled",
+        # 黑色日志框：宽度随窗口铺满，高度请求 12 行。窗口高 720px 下其余
+        # 固定内容不至于挤满客户区，日志框保有充足初始高度并随 expand 撑满剩余。
+        self.log_text = ScrolledText(frm_progress, height=12, state="disabled",
                                      font=self.font_log, bg="#1e1e1e", fg="#d4d4d4")
         self.log_text.pack(fill="both", expand=True, pady=(4, 0))
 

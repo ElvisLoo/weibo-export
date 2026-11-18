@@ -61,24 +61,13 @@ def data_dir() -> str:
 
 
 def export_dir() -> str:
-    """默认导出目录：优先 D 盘根目录的「微博导出」，D 盘不存在时回退。
+    """导出目录（GUI 与 server 统一走 default_export_dir）。
 
-    用户明确要求把默认导出目录改到 D 盘根目录，微博导出文件夹。
+    历史 bug：本函数曾用 ~/微博导出 兜底，而 server 用的 default_export_dir()
+    用 ~/Documents/微博导出 兜底，导致无 D 盘机器上 GUI 与 server 导出路径分裂、
+    用户找不到文件。现统一委托给 default_export_dir()，保证两种模式同一目录。
     """
-    # 尝试 D 盘（Windows）
-    if os.name == "nt":
-        d_path = "D:\\微博导出"
-        try:
-            if os.path.exists("D:\\") or os.access("D:\\", os.W_OK):
-                os.makedirs(d_path, exist_ok=True)
-                return d_path
-        except (OSError, PermissionError):
-            pass
-
-    # 回退到用户目录
-    fallback = os.path.join(os.path.expanduser("~"), "微博导出")
-    os.makedirs(fallback, exist_ok=True)
-    return fallback
+    return default_export_dir()
 
 
 def static_dir() -> str:

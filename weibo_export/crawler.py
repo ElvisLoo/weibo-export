@@ -204,7 +204,10 @@ class BaseCrawler:
 
         prev = db.latest_task_for(conn, user_id, self.name) if resume else None
         start_page = 1
-        if resume and prev and prev.get("status") == "running" and prev.get("max_page"):
+        # 断点续传：上一任务为"运行中"或"中途停止(未到底)"时，才从断点页续抓。
+        # status=="stopped" 是 v1.3.23 引入的中间态——优雅停止/限流放弃时置此值，
+        # 区别于"正常跑完到底"的 done，从而续传判定不会误判为已抓完。
+        if resume and prev and prev.get("status") in ("running", "stopped") and prev.get("max_page"):
             start_page = int(prev["max_page"]) + 1
 
         total_pages = max_pages if max_pages else _parse_count_cn(user.get("statuses_count", 0))
@@ -214,55 +217,67 @@ class BaseCrawler:
         total_new = 0
         empty_streak = 0
         reason = ""
+        interrupted = False   # 是否中途停止（优雅停止/限流放弃/异常），区别于正常到底
         page = start_page
-        while True:
-            if self.stop_flag():
-                reason = "用户请求停止（断点已保存，可续传）"
-                break
-            if max_pages and pages_fetched >= max_pages:
-                reason = "已达到本次设置的最大页数"
-                break
-            self._emit({"type": "page_start", "user_id": user_id, "page": page})
-            data = self.fetch_page(user_id, page)
-            posts = data.get("posts", [])
-            ok = data.get("ok")
-            self._sleep()  # 限速：每条请求间隔约 interval 秒
-            if not posts:
-                empty_streak += 1
-                # 区分两种"空页"：
-                #   ok == 1 且 cards 为空   → 新浪明确返回成功但无数据，是真到底
-                #   ok != 1 / 解析失败/请求异常 → 多半是限流(418)或反爬，不是到底
-                # 只有"连续多页明确成功且无数据"才判定到底；否则视为限流，
-                # 退避后重试同一页，避免刚抓几条就被误判成"到底"。
-                if ok == 1 and empty_streak >= 3:
-                    reason = f"连续 {empty_streak} 页确认为空（已到底）"
+        try:
+            while True:
+                if self.stop_flag():
+                    reason = "用户请求停止（断点已保存，可续传）"
+                    interrupted = True
                     break
-                # 限流/异常：退避重试同一页，最多 5 次连续失败后放弃
-                if empty_streak >= 5:
-                    reason = f"连续 {empty_streak} 次请求未取到数据（可能被限流），已停止（断点已保存，可稍后续传）"
+                if max_pages and pages_fetched >= max_pages:
+                    reason = "已达到本次设置的最大页数"
                     break
-                backoff = min(30, 5 * empty_streak)
-                self._emit({"type": "info", "message":
-                            f"第 {page} 页未取到数据（第 {empty_streak} 次，可能限流），"
-                            f"退避 {backoff}s 后重试同一页"})
-                time.sleep(backoff)
-                continue  # 不 page += 1，重试当前页
-            else:
-                empty_streak = 0
-                total_new += db.upsert_posts(conn, posts)
-                pages_fetched += 1
-                db.update_task(conn, task_id, max_page=page, post_count=db.count_posts(conn, user_id))
-                self._emit({
-                    "type": "page_done", "user_id": user_id, "page": page,
-                    "new_posts": len(posts), "total_in_db": db.count_posts(conn, user_id),
-                })
-                page += 1
-                continue
-            page += 1
-
-        db.update_task(conn, task_id, status="done", message=reason,
-                       post_count=db.count_posts(conn, user_id))
-        self._emit({"type": "done", "user_id": user_id, "reason": reason})
+                self._emit({"type": "page_start", "user_id": user_id, "page": page})
+                data = self.fetch_page(user_id, page)
+                posts = data.get("posts", [])
+                ok = data.get("ok")
+                self._sleep()  # 限速：每条请求间隔约 interval 秒
+                if not posts:
+                    empty_streak += 1
+                    # 区分两种"空页"：
+                    #   ok == 1 且 cards 为空   → 新浪明确返回成功但无数据，是真到底
+                    #   ok != 1 / 解析失败/请求异常 → 多半是限流(418)或反爬，不是到底
+                    # 只有"连续多页明确成功且无数据"才判定到底；否则视为限流，
+                    # 退避后重试同一页，避免刚抓几条就被误判成"到底"。
+                    if ok == 1 and empty_streak >= 3:
+                        reason = f"连续 {empty_streak} 页确认为空（已到底）"
+                        break
+                    # 限流/异常：退避重试同一页，最多 5 次连续失败后放弃
+                    if empty_streak >= 5:
+                        reason = f"连续 {empty_streak} 次请求未取到数据（可能被限流），已停止（断点已保存，可稍后续传）"
+                        interrupted = True
+                        break
+                    backoff = min(30, 5 * empty_streak)
+                    self._emit({"type": "info", "message":
+                                f"第 {page} 页未取到数据（第 {empty_streak} 次，可能限流），"
+                                f"退避 {backoff}s 后重试同一页"})
+                    time.sleep(backoff)
+                    continue  # 不 page += 1，重试当前页
+                else:
+                    empty_streak = 0
+                    total_new += db.upsert_posts(conn, posts)
+                    pages_fetched += 1
+                    db.update_task(conn, task_id, max_page=page, post_count=db.count_posts(conn, user_id))
+                    self._emit({
+                        "type": "page_done", "user_id": user_id, "page": page,
+                        "new_posts": len(posts), "total_in_db": db.count_posts(conn, user_id),
+                    })
+                    page += 1
+                    continue
+        except Exception as e:
+            # 网络异常/CrawlerError 等导致循环中断：记录原因并标记为可续传，
+            # 避免任务永久卡在 running、且用户看不到停止原因。
+            reason = f"抓取中断：{e}"
+            interrupted = True
+            self._emit({"type": "error", "message": reason})
+        finally:
+            # 收尾一定执行：正常到底写 done，中途停止写 stopped（可续传）。
+            db.update_task(conn, task_id,
+                           status=("stopped" if interrupted else "done"),
+                           message=reason,
+                           post_count=db.count_posts(conn, user_id))
+            self._emit({"type": "done", "user_id": user_id, "reason": reason})
         return CrawlResult(user=user, task_id=task_id, total_posts=db.count_posts(conn, user_id),
                            pages_fetched=pages_fetched, stopped_reason=reason)
 
